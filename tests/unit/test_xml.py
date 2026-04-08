@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from xml.etree import ElementTree as ET
 
 from nanio.xml import (
@@ -37,7 +37,7 @@ def test_list_buckets_empty():
 
 
 def test_list_buckets_multiple():
-    when = datetime(2026, 4, 8, 12, 0, 0, tzinfo=timezone.utc)
+    when = datetime(2026, 4, 8, 12, 0, 0, tzinfo=UTC)
     xml = list_buckets_xml([("alpha", when), ("beta", when)])
     root = _parse(xml)
     names = [e.text for e in root.iter(_ns("Name"))]
@@ -47,13 +47,13 @@ def test_list_buckets_multiple():
 
 
 def test_list_buckets_escapes_special_chars():
-    when = datetime(2026, 4, 8, tzinfo=timezone.utc)
+    when = datetime(2026, 4, 8, tzinfo=UTC)
     xml = list_buckets_xml([("a&b", when)])
     assert b"a&amp;b" in xml
 
 
 def test_list_objects_v2_basic():
-    when = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    when = datetime(2026, 1, 1, tzinfo=UTC)
     xml = list_objects_v2_xml(
         bucket="widgets",
         contents=[("foo.txt", when, '"deadbeef"', 100)],
@@ -106,7 +106,7 @@ def test_list_objects_v2_common_prefixes():
 
 
 def test_list_objects_v2_url_encoding():
-    when = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    when = datetime(2026, 1, 1, tzinfo=UTC)
     xml = list_objects_v2_xml(
         bucket="widgets",
         contents=[("a b/c?d.txt", when, '"e"', 1)],
@@ -140,7 +140,7 @@ def test_complete_multipart_upload_xml():
 
 
 def test_list_parts_xml():
-    when = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    when = datetime(2026, 1, 1, tzinfo=UTC)
     xml = list_parts_xml(
         bucket="b",
         key="k",
@@ -158,7 +158,7 @@ def test_list_parts_xml():
 
 
 def test_list_multipart_uploads_xml():
-    when = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    when = datetime(2026, 1, 1, tzinfo=UTC)
     xml = list_multipart_uploads_xml(
         bucket="b",
         uploads=[("k1", "u1", when), ("k2", "u2", when)],
@@ -185,7 +185,7 @@ def test_delete_result_xml():
 
 
 def test_copy_object_result_xml():
-    when = datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+    when = datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC)
     xml = copy_object_result_xml(etag='"abc"', last_modified=when)
     root = _parse(xml)
     assert root.find(_ns("ETag")).text == '"abc"'

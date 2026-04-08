@@ -15,11 +15,12 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import contextlib
 import os
 import shutil
 import uuid
 from collections.abc import AsyncIterator, Iterator, Mapping
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from nanio.errors import (
@@ -30,7 +31,7 @@ from nanio.errors import (
     NoSuchBucket,
     NoSuchKey,
 )
-from nanio.etag import StreamingMd5, unquote_etag
+from nanio.etag import StreamingMd5
 from nanio.keys import validate_bucket_name, validate_object_key
 from nanio.storage.backend import (
     BucketInfo,
@@ -124,7 +125,7 @@ class FilesystemStorage:
         st = bucket_dir(self._data_dir, bucket).stat()
         return BucketInfo(
             name=bucket,
-            created=datetime.fromtimestamp(st.st_ctime, tz=timezone.utc),
+            created=datetime.fromtimestamp(st.st_ctime, tz=UTC),
         )
 
     # ------------------------------------------------------------------
@@ -185,7 +186,7 @@ class FilesystemStorage:
             key=key,
             size=hasher.size,
             etag=hasher.quoted_etag(),
-            last_modified=datetime.now(tz=timezone.utc),
+            last_modified=datetime.now(tz=UTC),
             content_type=content_type,
             user_metadata=dict(user_metadata or {}),
             content_encoding=content_encoding,
@@ -244,14 +245,10 @@ class FilesystemStorage:
             raise NoSuchBucket(resource=bucket)
         opath = object_path(self._data_dir, bucket, key)
         # S3 DELETE is idempotent — deleting a non-existent key is success.
-        try:
+        with contextlib.suppress(FileNotFoundError):
             os.remove(opath)
-        except FileNotFoundError:
-            pass
-        try:
+        with contextlib.suppress(FileNotFoundError):
             os.remove(metadata_path(self._data_dir, bucket, key))
-        except FileNotFoundError:
-            pass
         # Best-effort: prune empty parent dirs (but never the bucket dir itself).
         _prune_empty_dirs(opath.parent, stop_at=bucket_dir(self._data_dir, bucket))
 
@@ -497,5 +494,5 @@ def _is_common_prefix_target(rel_path: str, prefix: str) -> bool:
     if not rel_path.startswith(prefix):
         # The directory is part of the prefix's parent chain — keep walking.
         return False
-    remainder = rel_path[len(prefix):]
+    remainder = rel_path[len(prefix) :]
     return bool(remainder)

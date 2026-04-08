@@ -24,7 +24,7 @@ from starlette.requests import Request
 from starlette.responses import Response
 
 from nanio.app_state import get_settings, get_storage
-from nanio.errors import InvalidRequest, NoSuchBucket, S3Error
+from nanio.errors import InvalidRequest, S3Error
 from nanio.handlers.multipart import list_multipart_uploads_for_bucket
 from nanio.xml import (
     delete_result_xml,

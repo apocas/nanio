@@ -7,7 +7,7 @@ is wrong.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 from botocore.auth import S3SigV4Auth
@@ -35,7 +35,6 @@ from nanio.errors import (
     SignatureDoesNotMatch,
 )
 
-
 ACCESS_KEY = "AKIDEXAMPLE"
 SECRET_KEY = "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY"
 REGION = "us-east-1"
@@ -45,7 +44,9 @@ def _lookup(key: str) -> str | None:
     return SECRET_KEY if key == ACCESS_KEY else None
 
 
-def _sign_request(method: str, url: str, body: bytes = b"", payload_hash: str | None = None) -> AWSRequest:
+def _sign_request(
+    method: str, url: str, body: bytes = b"", payload_hash: str | None = None
+) -> AWSRequest:
     """Sign a request with boto3's own SigV4 implementation, return the AWSRequest.
 
     Note: `payload_signing_enabled=False` only takes effect on HTTPS URLs in
@@ -123,13 +124,13 @@ def test_parse_amz_date_invalid():
 
 
 def test_check_clock_skew_within_window():
-    now = datetime(2024, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+    now = datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC)
     check_clock_skew(now, now=now)
 
 
 def test_check_clock_skew_too_far():
-    now = datetime(2024, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
-    far = datetime(2024, 1, 1, 14, 0, 0, tzinfo=timezone.utc)
+    now = datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC)
+    far = datetime(2024, 1, 1, 14, 0, 0, tzinfo=UTC)
     with pytest.raises(RequestTimeTooSkewed):
         check_clock_skew(now, now=far, skew=DEFAULT_SKEW_SECONDS)
 
@@ -179,9 +180,7 @@ def test_derive_signing_key_known_value():
     """Reference test vector from the AWS docs."""
     secret = "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY"
     key = derive_signing_key(secret, date="20120215", region="us-east-1", service="iam")
-    expected = bytes.fromhex(
-        "f4780e2d9f65fa895f9c67b32ce1baf0b0d8a43505a000a1a9e090d414db404d"
-    )
+    expected = bytes.fromhex("f4780e2d9f65fa895f9c67b32ce1baf0b0d8a43505a000a1a9e090d414db404d")
     assert key == expected
 
 

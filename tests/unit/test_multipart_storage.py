@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 from collections.abc import AsyncIterator
+from datetime import UTC
 
 import pytest
 
@@ -174,12 +175,12 @@ def test_warn_about_abandoned_uploads(manager):
     upload_id = manager.create(MultipartInit(bucket="widgets", key="k"))
     # Force an ancient initiated time by rewriting init.json
     init = manager.load_init(upload_id)
-    from datetime import datetime, timedelta, timezone
+    from datetime import datetime, timedelta
 
-    init.initiated = datetime.now(tz=timezone.utc) - timedelta(days=30)
-    from nanio.storage.multipart import _init_to_dict
+    init.initiated = datetime.now(tz=UTC) - timedelta(days=30)
     import json
 
+    from nanio.storage.multipart import _init_to_dict
     from nanio.storage.paths import multipart_init_path
 
     p = multipart_init_path(manager._data_dir, upload_id)

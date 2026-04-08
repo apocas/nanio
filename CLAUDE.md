@@ -102,6 +102,9 @@ tests/
 # Default suite (unit + integration, ~250 tests, runs in <10 s)
 uv run pytest
 
+# Run all pre-commit hooks against every file (ruff + hygiene)
+uv run pre-commit run --all-files
+
 # Just unit tests
 uv run pytest tests/unit -q
 
@@ -166,10 +169,28 @@ existing boto3 round trip needs an explicit decision and a new test.
 ## Code style
 
 - `ruff` enforced (config in `pyproject.toml`)
+- `ruff format` enforced — CI runs `ruff format --check src tests`
 - `mypy --strict` on `src/nanio` (excludes `_vendor` if any)
 - Imports sorted via ruff's I rule
 - Line length 100, but ruff's E501 is ignored — let the formatter wrap
 - All public functions and classes have a one-line docstring at minimum
+
+## Pre-commit hooks
+
+The repo ships a `.pre-commit-config.yaml` that runs ruff (lint + format) and
+basic file hygiene checks before each commit. **Install once after cloning:**
+
+```bash
+uv sync --extra dev
+uv run pre-commit install
+```
+
+After that, every `git commit` will run the hooks. If a hook auto-fixes
+something, the commit aborts — re-stage the fixes and commit again. Run
+manually against the whole repo with `uv run pre-commit run --all-files`.
+
+The ruff version pinned in `.pre-commit-config.yaml` MUST match the one in
+`uv.lock`. Bump them together.
 
 ## Things NOT to break
 

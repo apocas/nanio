@@ -31,7 +31,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable
 from typing import Protocol
 
 from nanio.auth.sigv4 import EMPTY_SHA256
@@ -53,7 +53,7 @@ class _Buffered:
     underlying stream.
     """
 
-    __slots__ = ("_source", "_buf", "_eof")
+    __slots__ = ("_buf", "_eof", "_source")
 
     def __init__(self, source: AsyncByteSource) -> None:
         self._source = source
@@ -111,9 +111,7 @@ def _chunk_string_to_sign(
 
 
 def _sign_chunk(signing_key: bytes, string_to_sign: str) -> str:
-    return hmac.new(
-        signing_key, string_to_sign.encode("utf-8"), hashlib.sha256
-    ).hexdigest()
+    return hmac.new(signing_key, string_to_sign.encode("utf-8"), hashlib.sha256).hexdigest()
 
 
 async def decode_aws_chunked(

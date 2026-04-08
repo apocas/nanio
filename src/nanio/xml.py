@@ -107,7 +107,9 @@ def list_objects_v2_xml(
             f"<NextContinuationToken>{_esc(next_continuation_token)}</NextContinuationToken>"
         )
     if start_after is not None:
-        parts.append(f"<StartAfter>{_esc(_maybe_url_encode(start_after, encoding_type))}</StartAfter>")
+        parts.append(
+            f"<StartAfter>{_esc(_maybe_url_encode(start_after, encoding_type))}</StartAfter>"
+        )
 
     for key, last_mod, etag, size in contents:
         encoded_key = _maybe_url_encode(key, encoding_type)
@@ -282,4 +284,4 @@ def copy_object_result_xml(*, etag: str, last_modified: datetime) -> bytes:
 def location_constraint_xml(region: str) -> bytes:
     return (
         f'{_XML_DECL}<LocationConstraint xmlns="{S3_NS}">{_esc(region)}</LocationConstraint>'
-    ).encode("utf-8")
+    ).encode()

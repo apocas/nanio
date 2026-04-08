@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 import os
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from nanio.storage.backend import ObjectInfo
@@ -70,7 +70,7 @@ def synthesize_metadata_from_stat(path: Path, key: str) -> ObjectInfo:
     listings, with sensible defaults for content type and ETag.
     """
     st = path.stat()
-    last_mod = datetime.fromtimestamp(st.st_mtime, tz=timezone.utc)
+    last_mod = datetime.fromtimestamp(st.st_mtime, tz=UTC)
     return ObjectInfo(
         key=key,
         size=st.st_size,

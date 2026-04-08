@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
+import dataclasses
 import os
-from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -33,7 +33,7 @@ def test_defaults(env_creds, tmp_path):
 
 def test_settings_is_immutable(env_creds, tmp_path):
     s = Settings(data_dir=tmp_path)
-    with pytest.raises(Exception):  # FrozenInstanceError on dataclass
+    with pytest.raises(dataclasses.FrozenInstanceError):
         s.port = 8080  # type: ignore[misc]
 
 

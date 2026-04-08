@@ -22,9 +22,9 @@ from __future__ import annotations
 
 import hashlib
 import hmac
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import NamedTuple
-from urllib.parse import quote, unquote, urlparse
+from urllib.parse import quote, unquote
 
 from nanio.errors import (
     AuthorizationHeaderMalformed,
@@ -66,9 +66,7 @@ def parse_authorization_header(value: str) -> AuthorizationParts:
         SignedHeaders=host;x-amz-date, Signature=abcdef...
     """
     if not value or not value.startswith(ALGORITHM + " "):
-        raise AuthorizationHeaderMalformed(
-            f"expected algorithm {ALGORITHM}, got {value!r}"
-        )
+        raise AuthorizationHeaderMalformed(f"expected algorithm {ALGORITHM}, got {value!r}")
     body = value[len(ALGORITHM) + 1 :]
     fields: dict[str, str] = {}
     for chunk in body.split(","):
@@ -105,13 +103,15 @@ def parse_authorization_header(value: str) -> AuthorizationParts:
 def parse_amz_date(value: str) -> datetime:
     """Parse a `x-amz-date` ISO8601 basic-format timestamp."""
     try:
-        return datetime.strptime(value, "%Y%m%dT%H%M%SZ").replace(tzinfo=timezone.utc)
+        return datetime.strptime(value, "%Y%m%dT%H%M%SZ").replace(tzinfo=UTC)
     except ValueError as exc:
         raise AuthorizationHeaderMalformed(f"bad x-amz-date {value!r}") from exc
 
 
-def check_clock_skew(amz_date: datetime, *, now: datetime | None = None, skew: int = DEFAULT_SKEW_SECONDS) -> None:
-    now = now or datetime.now(tz=timezone.utc)
+def check_clock_skew(
+    amz_date: datetime, *, now: datetime | None = None, skew: int = DEFAULT_SKEW_SECONDS
+) -> None:
+    now = now or datetime.now(tz=UTC)
     delta = abs((now - amz_date).total_seconds())
     if delta > skew:
         raise RequestTimeTooSkewed(
@@ -355,7 +355,7 @@ def verify_presigned_url(
     expires = int(qparams.get("X-Amz-Expires", "3600"))
     if expires < 1 or expires > 7 * 24 * 3600:
         raise AuthorizationHeaderMalformed(f"X-Amz-Expires out of range: {expires}")
-    now = now or datetime.now(tz=timezone.utc)
+    now = now or datetime.now(tz=UTC)
     if (now - amz_date).total_seconds() > expires:
         raise RequestTimeTooSkewed("presigned URL expired")
     # Allow modest clock skew the other way too.

@@ -26,7 +26,6 @@ from nanio.app import build_app
 from nanio.auth.credentials import StaticCredentialResolver
 from nanio.config import Settings
 
-
 TEST_ACCESS_KEY = "test-access-key"
 TEST_SECRET_KEY = "test-secret-key"
 

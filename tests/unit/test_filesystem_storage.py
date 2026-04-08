@@ -88,7 +88,9 @@ def test_delete_missing_bucket(storage):
 def test_put_then_head(storage):
     storage.create_bucket("widgets")
     info = asyncio.run(
-        storage.put_object("widgets", "hello.txt", _stream(b"hello world"), content_type="text/plain")
+        storage.put_object(
+            "widgets", "hello.txt", _stream(b"hello world"), content_type="text/plain"
+        )
     )
     assert info.size == 11
     assert info.etag == f'"{hashlib.md5(b"hello world", usedforsecurity=False).hexdigest()}"'
@@ -114,9 +116,7 @@ def test_put_with_correct_md5(storage):
     storage.create_bucket("widgets")
     payload = b"hello"
     md5 = base64.b64encode(hashlib.md5(payload, usedforsecurity=False).digest()).decode()
-    info = asyncio.run(
-        storage.put_object("widgets", "k", _stream(payload), expected_md5=md5)
-    )
+    info = asyncio.run(storage.put_object("widgets", "k", _stream(payload), expected_md5=md5))
     assert info.size == 5
 
 
@@ -124,9 +124,7 @@ def test_put_with_bad_md5(storage):
     storage.create_bucket("widgets")
     bad = base64.b64encode(b"\x00" * 16).decode()
     with pytest.raises(BadDigest):
-        asyncio.run(
-            storage.put_object("widgets", "k", _stream(b"hello"), expected_md5=bad)
-        )
+        asyncio.run(storage.put_object("widgets", "k", _stream(b"hello"), expected_md5=bad))
     # The temp file must NOT be left behind, and the object must NOT exist.
     with pytest.raises(NoSuchKey):
         storage.head_object("widgets", "k")
@@ -274,8 +272,12 @@ def test_list_objects_pagination_round_trip(storage):
     for i in range(7):
         _put(storage, "widgets", f"k-{i}.txt")
     page1 = storage.list_objects("widgets", max_keys=3)
-    page2 = storage.list_objects("widgets", max_keys=3, continuation_token=page1.next_continuation_token)
-    page3 = storage.list_objects("widgets", max_keys=3, continuation_token=page2.next_continuation_token)
+    page2 = storage.list_objects(
+        "widgets", max_keys=3, continuation_token=page1.next_continuation_token
+    )
+    page3 = storage.list_objects(
+        "widgets", max_keys=3, continuation_token=page2.next_continuation_token
+    )
     keys = [c.key for c in page1.contents + page2.contents + page3.contents]
     assert keys == [f"k-{i}.txt" for i in range(7)]
     assert page3.is_truncated is False
@@ -311,9 +313,7 @@ def test_list_objects_skips_metadata_dir(storage, tmp_path):
 def test_copy_object(storage):
     storage.create_bucket("src")
     storage.create_bucket("dst")
-    asyncio.run(
-        storage.put_object("src", "k.txt", _stream(b"hello"), content_type="text/plain")
-    )
+    asyncio.run(storage.put_object("src", "k.txt", _stream(b"hello"), content_type="text/plain"))
     info = asyncio.run(storage.copy_object("src", "k.txt", "dst", "k.txt"))
     assert info.size == 5
     assert info.content_type == "text/plain"

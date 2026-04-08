@@ -72,12 +72,8 @@ def test_upload_three_parts_and_complete(boto3_client, bucket):
 def test_list_parts(boto3_client, bucket):
     create = boto3_client.create_multipart_upload(Bucket=bucket, Key="k")
     upload_id = create["UploadId"]
-    boto3_client.upload_part(
-        Bucket=bucket, Key="k", UploadId=upload_id, PartNumber=1, Body=b"x"
-    )
-    boto3_client.upload_part(
-        Bucket=bucket, Key="k", UploadId=upload_id, PartNumber=2, Body=b"y"
-    )
+    boto3_client.upload_part(Bucket=bucket, Key="k", UploadId=upload_id, PartNumber=1, Body=b"x")
+    boto3_client.upload_part(Bucket=bucket, Key="k", UploadId=upload_id, PartNumber=2, Body=b"y")
     parts = boto3_client.list_parts(Bucket=bucket, Key="k", UploadId=upload_id)
     assert [p["PartNumber"] for p in parts.get("Parts", [])] == [1, 2]
     boto3_client.abort_multipart_upload(Bucket=bucket, Key="k", UploadId=upload_id)

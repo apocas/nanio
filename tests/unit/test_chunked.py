@@ -21,7 +21,6 @@ from nanio.auth.chunked import (
 from nanio.auth.sigv4 import EMPTY_SHA256, derive_signing_key
 from nanio.errors import InvalidRequest, SignatureDoesNotMatch
 
-
 SECRET_KEY = "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY"
 DATE = "20240101"
 REGION = "us-east-1"
@@ -164,7 +163,7 @@ async def test_bad_chunk_signature():
 @pytest.mark.asyncio
 async def test_truncated_body():
     payload = b"hello"
-    body = _build_chunked_body([payload])[: 30]  # cut mid-frame
+    body = _build_chunked_body([payload])[:30]  # cut mid-frame
     decoder = decode_aws_chunked(
         _make_source(body),
         signing_key=SIGNING_KEY,

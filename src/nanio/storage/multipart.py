@@ -25,7 +25,7 @@ import secrets
 import shutil
 from collections.abc import AsyncIterator, Iterable, Mapping
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from nanio.errors import (
@@ -56,7 +56,7 @@ class MultipartInit:
     content_encoding: str | None = None
     content_disposition: str | None = None
     cache_control: str | None = None
-    initiated: datetime = field(default_factory=lambda: datetime.now(tz=timezone.utc))
+    initiated: datetime = field(default_factory=lambda: datetime.now(tz=UTC))
 
 
 @dataclass(slots=True)
@@ -152,7 +152,7 @@ class MultipartManager:
             part_number=part_number,
             etag=hasher.quoted_etag(),
             size=hasher.size,
-            last_modified=datetime.now(tz=timezone.utc),
+            last_modified=datetime.now(tz=UTC),
         )
 
     # ------------------------------------------------------------------
@@ -185,7 +185,7 @@ class MultipartManager:
                     part_number=pn,
                     etag=quote_etag(md5_hex),
                     size=stat.st_size,
-                    last_modified=datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc),
+                    last_modified=datetime.fromtimestamp(stat.st_mtime, tz=UTC),
                 )
             )
         return out
@@ -213,7 +213,7 @@ class MultipartManager:
         Caller logs the warnings — we keep this pure so unit tests can
         assert on the result.
         """
-        now = datetime.now(tz=timezone.utc)
+        now = datetime.now(tz=UTC)
         old: list[tuple[str, datetime]] = []
         for upload_id, init in self.list_uploads():
             age = (now - init.initiated).total_seconds()
@@ -290,7 +290,7 @@ class MultipartManager:
             key=init.key,
             size=total_size,
             etag=final_etag,
-            last_modified=datetime.now(tz=timezone.utc),
+            last_modified=datetime.now(tz=UTC),
             content_type=init.content_type,
             user_metadata=dict(init.user_metadata),
             content_encoding=init.content_encoding,

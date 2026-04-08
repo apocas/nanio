@@ -9,7 +9,6 @@ import pytest
 from nanio.errors import InvalidBucketName, InvalidObjectName
 from nanio.keys import safe_join, validate_bucket_name, validate_object_key
 
-
 # ---- bucket names ----------------------------------------------------------
 
 

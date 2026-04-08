@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 
@@ -19,7 +19,7 @@ def _info(**overrides) -> ObjectInfo:
         key="path/to/file.txt",
         size=42,
         etag='"deadbeef"',
-        last_modified=datetime(2026, 4, 8, 12, 0, 0, tzinfo=timezone.utc),
+        last_modified=datetime(2026, 4, 8, 12, 0, 0, tzinfo=UTC),
         content_type="text/plain",
         user_metadata={"foo": "bar"},
     )

@@ -69,9 +69,7 @@ async def test_bad_digest(asgi_client):
 
     await asgi_client.put("/widgets")
     bad = base64.b64encode(b"\x00" * 16).decode()
-    r = await asgi_client.put(
-        "/widgets/k", content=b"hello", headers={"content-md5": bad}
-    )
+    r = await asgi_client.put("/widgets/k", content=b"hello", headers={"content-md5": bad})
     assert r.status_code == 400
     assert _parse_error(r.content)["Code"] == "BadDigest"
 

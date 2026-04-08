@@ -42,9 +42,11 @@ def test_env_resolver_happy_path():
 
 
 def test_env_resolver_missing_raises():
-    with patch.dict(os.environ, {}, clear=True):
-        with pytest.raises(ValueError, match="NANIO_ACCESS_KEY"):
-            EnvCredentialResolver()
+    with (
+        patch.dict(os.environ, {}, clear=True),
+        pytest.raises(ValueError, match="NANIO_ACCESS_KEY"),
+    ):
+        EnvCredentialResolver()
 
 
 def test_toml_resolver(tmp_path):

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import uuid
 
 import pytest
@@ -57,10 +58,8 @@ def test_copy_object_across_buckets(boto3_client, bucket):
         assert head["ContentLength"] == 4
     finally:
         for k in ("dst",):
-            try:
+            with contextlib.suppress(ClientError):
                 boto3_client.delete_object(Bucket=other, Key=k)
-            except ClientError:
-                pass
         boto3_client.delete_bucket(Bucket=other)
 
 

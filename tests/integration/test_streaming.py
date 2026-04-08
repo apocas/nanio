@@ -13,13 +13,13 @@ by more than 200 MB.
 
 from __future__ import annotations
 
+import contextlib
 import io
 import os
-import resource
 import time
 
 import pytest
-
+from botocore.exceptions import ClientError
 
 SIZE_MB = int(os.environ.get("NANIO_STREAMING_TEST_MB", "1024"))  # default 1 GB
 
@@ -79,10 +79,8 @@ class _GenStream(io.RawIOBase):
 def test_streaming_upload_and_download_bounded_memory(boto3_client, live_server):
     """Upload + download `SIZE_MB` MB and assert server RSS stays bounded."""
     bucket = "nanio-streaming-test"
-    try:
+    with contextlib.suppress(ClientError):
         boto3_client.create_bucket(Bucket=bucket)
-    except Exception:
-        pass
 
     baseline = _rss_kb_of(live_server.pid)
     assert baseline > 0, "could not read /proc/<pid>/status — Linux only"

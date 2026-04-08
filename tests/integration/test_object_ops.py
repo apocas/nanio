@@ -31,7 +31,9 @@ async def test_put_then_get_round_trip(asgi_client):
 
 @pytest.mark.asyncio
 async def test_head_returns_metadata_no_body(asgi_client):
-    await asgi_client.put("/widgets/hello.txt", content=b"abc", headers={"content-type": "text/plain"})
+    await asgi_client.put(
+        "/widgets/hello.txt", content=b"abc", headers={"content-type": "text/plain"}
+    )
     r = await asgi_client.head("/widgets/hello.txt")
     assert r.status_code == 200
     assert r.headers["content-length"] == "3"

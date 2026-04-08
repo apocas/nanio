@@ -18,6 +18,7 @@ Run a load test against a local nanio with:
 
 from __future__ import annotations
 
+import contextlib
 import os
 import uuid
 
@@ -49,10 +50,8 @@ def ensure_bucket(client, name: str = LOAD_BUCKET) -> None:
     try:
         client.head_bucket(Bucket=name)
     except Exception:
-        try:
+        with contextlib.suppress(Exception):
             client.create_bucket(Bucket=name)
-        except Exception:
-            pass
 
 
 def random_key(prefix: str = "obj") -> str:

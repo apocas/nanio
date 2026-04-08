@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import re
 from collections.abc import AsyncIterator
-
 from urllib.parse import unquote
 
 from starlette.requests import Request
@@ -41,7 +40,7 @@ async def dispatch_object(request: Request) -> Response:
     if method == "PUT":
         if "uploadId" in qp and "partNumber" in qp:
             return await upload_part(request, bucket, key)
-        if "x-amz-copy-source" in {k.lower() for k in request.headers.keys()}:
+        if any(k.lower() == "x-amz-copy-source" for k in request.headers):
             return await copy_object(request, bucket, key)
         return await put_object(request, bucket, key)
     if method == "GET":
@@ -123,9 +122,7 @@ async def head_object(request: Request, bucket: str, key: str) -> Response:
 async def get_object(request: Request, bucket: str, key: str) -> Response:
     storage = get_storage(request)
     range_start, range_end = _parse_range_header(request.headers.get("range"))
-    result = await storage.get_object(
-        bucket, key, range_start=range_start, range_end=range_end
-    )
+    result = await storage.get_object(bucket, key, range_start=range_start, range_end=range_end)
     info = result.info
     headers = _info_to_headers(info)
     if result.range_start is not None and result.range_end is not None:

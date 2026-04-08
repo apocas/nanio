@@ -17,14 +17,11 @@ need to exercise auth.
 from __future__ import annotations
 
 from starlette.requests import Request
-from starlette.responses import Response
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from nanio.auth.chunked import decode_aws_chunked
 from nanio.auth.credentials import CredentialResolver
 from nanio.auth.sigv4 import (
-    STREAMING_PAYLOAD,
-    STREAMING_PAYLOAD_TRAILER,
     VerifiedRequest,
     parse_authorization_header,
     verify_header_auth,
@@ -66,16 +63,13 @@ class SigV4Middleware:
         scope["nanio.principal"] = verified.access_key
 
         if verified.is_streaming:
-            headers = {
-                k.decode("latin-1"): v.decode("latin-1")
-                for k, v in scope["headers"]
-            }
+            headers = {k.decode("latin-1"): v.decode("latin-1") for k, v in scope["headers"]}
             amz_date = (
-                headers.get("x-amz-date")
-                or headers.get("X-Amz-Date")
-                or headers.get("Date", "")
+                headers.get("x-amz-date") or headers.get("X-Amz-Date") or headers.get("Date", "")
             )
-            parts = parse_authorization_header(headers["authorization"] if "authorization" in headers else headers["Authorization"])
+            parts = parse_authorization_header(
+                headers["authorization"] if "authorization" in headers else headers["Authorization"]
+            )
             wrapped_receive = _make_chunked_receive(
                 receive,
                 signing_key=verified.signing_key,
@@ -88,7 +82,7 @@ class SigV4Middleware:
 
         await self._app(scope, receive, send)
 
-    def _verify(self, request: Request) -> "VerifiedRequest":
+    def _verify(self, request: Request) -> VerifiedRequest:
         headers = {k.decode("latin-1"): v.decode("latin-1") for k, v in request.scope["headers"]}
         method = request.method
         path = request.url.path

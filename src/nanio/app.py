@@ -7,13 +7,13 @@ factory function is what `uvicorn` calls with `factory=True`.
 
 from __future__ import annotations
 
+import os
+from pathlib import Path
+
 from starlette.applications import Starlette
 from starlette.middleware import Middleware
 from starlette.requests import Request
 from starlette.responses import Response
-
-import os
-from pathlib import Path
 
 from nanio.auth.credentials import (
     EnvCredentialResolver,
@@ -30,13 +30,11 @@ def _settings_from_env() -> Settings:
     data_dir = Path(os.environ.get("NANIO_DATA_DIR") or DEFAULT_DATA_DIR).resolve()
     region = os.environ.get("NANIO_REGION", "us-east-1")
     cred_file = os.environ.get("NANIO_CREDENTIALS_FILE")
-    credentials = (
-        TomlFileCredentialResolver(cred_file) if cred_file else EnvCredentialResolver()
-    )
+    credentials = TomlFileCredentialResolver(cred_file) if cred_file else EnvCredentialResolver()
     return Settings(data_dir=data_dir, region=region, credentials=credentials)
 
 
-async def _s3_error_handler(request: Request, exc: Exception) -> Response:  # noqa: ARG001
+async def _s3_error_handler(request: Request, exc: Exception) -> Response:
     assert isinstance(exc, S3Error)
     return Response(
         content=exc.to_xml(),

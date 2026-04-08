@@ -35,9 +35,17 @@ class SmallObjectUser(User):
     @task(3)
     def put_then_get(self):
         key = random_key("small")
-        self._timed("PUT small", lambda: self.client_s3.put_object(Bucket=LOAD_BUCKET, Key=key, Body=PAYLOAD))
-        self._timed("GET small", lambda: self.client_s3.get_object(Bucket=LOAD_BUCKET, Key=key)["Body"].read())
-        self._timed("DELETE small", lambda: self.client_s3.delete_object(Bucket=LOAD_BUCKET, Key=key))
+        self._timed(
+            "PUT small",
+            lambda: self.client_s3.put_object(Bucket=LOAD_BUCKET, Key=key, Body=PAYLOAD),
+        )
+        self._timed(
+            "GET small",
+            lambda: self.client_s3.get_object(Bucket=LOAD_BUCKET, Key=key)["Body"].read(),
+        )
+        self._timed(
+            "DELETE small", lambda: self.client_s3.delete_object(Bucket=LOAD_BUCKET, Key=key)
+        )
 
     @task(1)
     def list_first_page(self):

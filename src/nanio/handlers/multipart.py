@@ -47,9 +47,7 @@ def _manager(request: Request) -> MultipartManager:
 
 def _extract_user_metadata(request: Request) -> dict[str, str]:
     return {
-        k.lower(): v
-        for k, v in request.headers.items()
-        if k.lower().startswith(USER_META_PREFIX)
+        k.lower(): v for k, v in request.headers.items() if k.lower().startswith(USER_META_PREFIX)
     }
 
 
@@ -135,12 +133,8 @@ def _parse_complete_body(body: bytes) -> list[tuple[int, str]]:
         tag = elem.tag.split("}", 1)[-1]
         if tag != "Part":
             continue
-        pn_el = next(
-            (c for c in elem if c.tag.split("}", 1)[-1] == "PartNumber"), None
-        )
-        et_el = next(
-            (c for c in elem if c.tag.split("}", 1)[-1] == "ETag"), None
-        )
+        pn_el = next((c for c in elem if c.tag.split("}", 1)[-1] == "PartNumber"), None)
+        et_el = next((c for c in elem if c.tag.split("}", 1)[-1] == "ETag"), None)
         if pn_el is None or et_el is None or pn_el.text is None or et_el.text is None:
             raise InvalidRequest("Part missing PartNumber or ETag")
         try:

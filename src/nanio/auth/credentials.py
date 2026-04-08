@@ -80,9 +80,7 @@ class TomlFileCredentialResolver(StaticCredentialResolver):
             data = tomllib.load(f)
         users = data.get("users", [])
         if not isinstance(users, list) or not users:
-            raise ValueError(
-                f"credentials file {p} must contain at least one [[users]] table"
-            )
+            raise ValueError(f"credentials file {p} must contain at least one [[users]] table")
         pairs: dict[str, str] = {}
         for i, entry in enumerate(users):
             if not isinstance(entry, dict):
@@ -90,9 +88,7 @@ class TomlFileCredentialResolver(StaticCredentialResolver):
             access = entry.get("access_key")
             secret = entry.get("secret_key")
             if not isinstance(access, str) or not isinstance(secret, str):
-                raise ValueError(
-                    f"users[{i}] must have string access_key and secret_key fields"
-                )
+                raise ValueError(f"users[{i}] must have string access_key and secret_key fields")
             if access in pairs:
                 raise ValueError(f"duplicate access_key in credentials file: {access!r}")
             pairs[access] = secret
