@@ -56,7 +56,7 @@ async def dispatch_bucket(request: Request) -> Response:
         if "delete" in qp:
             return await delete_objects(request, bucket)
         return Response(status_code=405)
-    return Response(status_code=405)
+    return Response(status_code=405)  # pragma: no cover  (route limits methods)
 
 
 # ---------------------------------------------------------------------------

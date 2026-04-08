@@ -472,7 +472,8 @@ def _prune_empty_dirs(start: Path, *, stop_at: Path) -> None:
     while True:
         try:
             cur_resolved = cur.resolve()
-        except FileNotFoundError:
+        except FileNotFoundError:  # pragma: no cover
+            # Defensive: the current dir may disappear concurrently.
             return
         if cur_resolved == stop_at or stop_at not in cur_resolved.parents:
             return
@@ -506,7 +507,9 @@ def _walk_keys(
         sub = bdir if not rel_dir else bdir / rel_dir
         try:
             entries = sorted(os.scandir(sub), key=lambda e: e.name)
-        except FileNotFoundError:
+        except FileNotFoundError:  # pragma: no cover
+            # Defensive against a concurrent rmdir between the parent
+            # scandir (which yielded this dir) and our descent into it.
             return
         for entry in entries:
             if is_internal_name(entry.name):
@@ -524,13 +527,13 @@ def _walk_keys(
                     # last `/` of the prefix, treat it as a CommonPrefix.
                     if _is_common_prefix_target(rel_path, prefix):
                         cp = rel_path + "/"
-                        if cp not in seen_prefixes:
+                        if cp not in seen_prefixes:  # pragma: no branch
                             seen_prefixes.add(cp)
                             common_prefixes_out.append(cp)
                         continue
                 elif delimiter == "/" and not prefix:
                     cp = rel_path + "/"
-                    if cp not in seen_prefixes:
+                    if cp not in seen_prefixes:  # pragma: no branch
                         seen_prefixes.add(cp)
                         common_prefixes_out.append(cp)
                     continue

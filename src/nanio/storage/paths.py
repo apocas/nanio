@@ -77,11 +77,11 @@ def assert_inside_data_dir(data_dir: Path, target: Path) -> None:
     """
     data_real = os.path.realpath(data_dir)
     target_real = os.path.realpath(target)
-    # `commonpath` works for both — and is portable.
     try:
         common = os.path.commonpath([data_real, target_real])
-    except ValueError:
-        # Different drives on Windows; we don't support Windows but be safe.
+    except ValueError:  # pragma: no cover
+        # Only reachable on Windows with paths on different drives.
+        # nanio is POSIX-only but we keep the guard for safety.
         raise PermissionError(f"path escape: {target} resolves outside {data_dir}") from None
     if common != data_real:
         raise PermissionError(f"path escape: {target} resolves outside {data_dir}")

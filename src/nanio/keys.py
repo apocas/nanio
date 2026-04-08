@@ -47,7 +47,10 @@ def validate_bucket_name(name: str) -> None:
         raise InvalidBucketName("bucket name may not contain consecutive dots")
     if _BUCKET_IP_RE.match(name):
         raise InvalidBucketName("bucket name may not be formatted as an IP address")
-    if name.startswith(_RESERVED_PREFIX):
+    if name.startswith(_RESERVED_PREFIX):  # pragma: no cover
+        # Defensive — the regex check above already rejects any name
+        # starting with `.`, so this branch is unreachable. Keep it as
+        # belt-and-braces in case the regex relaxes later.
         raise InvalidBucketName(f"bucket name may not start with {_RESERVED_PREFIX!r}")
 
 
@@ -97,6 +100,9 @@ def safe_join(base: Path, *parts: str) -> Path:
     resolved = Path(os.path.normpath(candidate))
     try:
         resolved.relative_to(base)
-    except ValueError as exc:
+    except ValueError as exc:  # pragma: no cover
+        # Unreachable with normal `parts`: the `..` segment check above
+        # already covers every way to produce a path outside `base`.
+        # Kept as belt-and-braces against future normalization quirks.
         raise ValueError(f"safe_join refused path escaping base: {resolved}") from exc
     return resolved

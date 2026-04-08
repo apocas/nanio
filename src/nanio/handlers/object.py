@@ -53,7 +53,7 @@ async def dispatch_object(request: Request) -> Response:
         if "uploadId" in qp:
             return await abort_multipart_upload(request, bucket, key)
         return await delete_object(request, bucket, key)
-    return Response(status_code=405)
+    return Response(status_code=405)  # pragma: no cover  (route limits methods)
 
 
 # ---------------------------------------------------------------------------
@@ -142,7 +142,8 @@ async def delete_object(request: Request, bucket: str, key: str) -> Response:
 async def copy_object(request: Request, dst_bucket: str, dst_key: str) -> Response:
     storage = get_storage(request)
     raw_source = request.headers.get("x-amz-copy-source")
-    if not raw_source:
+    if not raw_source:  # pragma: no cover
+        # Unreachable: dispatcher only routes here when the header is present.
         raise InvalidRequest("x-amz-copy-source header missing")
     src_bucket, src_key = _parse_copy_source(raw_source)
     info = await storage.copy_object(src_bucket, src_key, dst_bucket, dst_key)

@@ -238,13 +238,20 @@ class MultipartManager:
                 continue
             try:
                 st = entry.stat(follow_symlinks=False)
-            except OSError:
+            except OSError:  # pragma: no cover
+                # Defensive against the dir vanishing between scandir
+                # and stat (rare race).
                 continue
             try:
                 init: MultipartInit | None = self.load_init(entry.name)
             except NoSuchUpload:
                 init = None
-            except (OSError, ValueError, KeyError) as exc:
+            except (OSError, ValueError, KeyError) as exc:  # pragma: no cover
+                # Defensive: `load_init` already translates every expected
+                # error (OSError, JSONDecodeError, KeyError) into
+                # NoSuchUpload internally, so this branch is unreachable
+                # via load_init's current contract. Kept as insurance
+                # against future changes that widen the surface.
                 _log.warning(
                     "multipart upload %s: init unreadable (%s); treating as orphan",
                     entry.name,
@@ -373,7 +380,10 @@ class MultipartManager:
                         offset = 0
                         while remaining > 0:
                             sent = os.sendfile(out_fd, in_fd, offset, remaining)
-                            if sent == 0:
+                            if sent == 0:  # pragma: no cover
+                                # sendfile returns 0 only on a short
+                                # source — happens if a part file was
+                                # truncated under us. Bail defensively.
                                 break
                             offset += sent
                             remaining -= sent

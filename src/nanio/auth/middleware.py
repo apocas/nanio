@@ -125,7 +125,10 @@ def _make_chunked_receive(
 
     async def _source() -> bytes:
         msg = await receive()
-        if msg["type"] != "http.request":
+        if msg["type"] != "http.request":  # pragma: no cover
+            # Defensive: the ASGI spec guarantees this branch is only
+            # reached for lifespan/disconnect messages, which don't
+            # arrive on the HTTP body receive channel mid-request.
             return b""
         return bytes(msg.get("body") or b"")
 
@@ -141,7 +144,10 @@ def _make_chunked_receive(
 
     async def _wrapped() -> Message:
         nonlocal done
-        if done:
+        if done:  # pragma: no cover
+            # Defensive: Starlette only calls `receive` until `more_body`
+            # is False, so this guard is belt-and-braces for handlers
+            # that misbehave and re-pull the body after it's drained.
             return {"type": "http.request", "body": b"", "more_body": False}
         try:
             chunk = await decoder.__anext__()

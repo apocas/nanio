@@ -129,11 +129,15 @@ tests/
 ## Running tests
 
 ```bash
-# Default suite (unit + integration, ~250 tests, runs in <10 s)
+# Default suite (unit + integration, ~440 tests, runs in <15 s)
 uv run pytest
 
-# Run all pre-commit hooks against every file (ruff + hygiene)
-uv run pre-commit run --all-files
+# With coverage (the project enforces 100%)
+uv run pytest --cov=nanio --cov-fail-under=100
+
+# Lint + format check
+uv run ruff check src tests
+uv run ruff format --check src tests
 
 # Just unit tests
 uv run pytest tests/unit -q
@@ -205,28 +209,23 @@ existing boto3 round trip needs an explicit decision and a new test.
 - Line length 100, but ruff's E501 is ignored — let the formatter wrap
 - All public functions and classes have a one-line docstring at minimum
 
-## Pre-commit hooks
-
-The repo ships a `.pre-commit-config.yaml` that runs ruff (lint + format) and
-basic file hygiene checks before each commit. **Install once after cloning:**
+## Dev environment
 
 ```bash
-uv sync                       # installs dev tools (pytest, ruff, pre-commit, ...)
-uv run pre-commit install     # wires the git hook
+uv sync     # installs everything: pytest, ruff, mypy, coverage, ...
 ```
 
 Dev tools live under `[dependency-groups] dev` (PEP 735), so a plain
 `uv sync` always gives you a complete dev environment. Don't move them
 back into `[project.optional-dependencies]` — `pip install nanio[dev]`
-isn't the install path we care about, and the optional-extras path
-silently breaks the pre-commit hook on a plain `uv sync`.
+isn't the install path we care about.
 
-After that, every `git commit` will run the hooks. If a hook auto-fixes
-something, the commit aborts — re-stage the fixes and commit again. Run
-manually against the whole repo with `uv run pre-commit run --all-files`.
+Lint + format manually before pushing (CI enforces both):
 
-The ruff version pinned in `.pre-commit-config.yaml` MUST match the one in
-`uv.lock`. Bump them together.
+```bash
+uv run ruff check --fix src tests
+uv run ruff format src tests
+```
 
 ## Things NOT to break
 
