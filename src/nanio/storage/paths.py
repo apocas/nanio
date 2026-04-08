@@ -1,0 +1,70 @@
+"""Single source of truth for on-disk path layout.
+
+Layout:
+
+    <data_dir>/<bucket>/                       — bucket root, contains object files
+    <data_dir>/<bucket>/<key>                  — raw object bytes
+    <data_dir>/<bucket>/.nanio-meta/<key>.json — sidecar metadata
+    <data_dir>/.nanio/multipart/<uploadId>/    — in-progress multipart upload state
+
+Every other module asks this module where things go. Centralizing this
+means changing the layout (e.g. introducing sharding in v0.2) is a
+single-file change.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+from nanio.keys import safe_join
+
+META_DIR_NAME = ".nanio-meta"
+MULTIPART_ROOT_NAME = ".nanio"
+MULTIPART_SUBDIR = "multipart"
+
+
+def bucket_dir(data_dir: Path, bucket: str) -> Path:
+    return data_dir / bucket
+
+
+def object_path(data_dir: Path, bucket: str, key: str) -> Path:
+    return safe_join(data_dir, bucket, key)
+
+
+def metadata_path(data_dir: Path, bucket: str, key: str) -> Path:
+    return safe_join(data_dir, bucket, META_DIR_NAME, key + ".json")
+
+
+def metadata_root(data_dir: Path, bucket: str) -> Path:
+    return data_dir / bucket / META_DIR_NAME
+
+
+def multipart_root(data_dir: Path) -> Path:
+    return data_dir / MULTIPART_ROOT_NAME / MULTIPART_SUBDIR
+
+
+def multipart_dir(data_dir: Path, upload_id: str) -> Path:
+    if "/" in upload_id or ".." in upload_id:
+        raise ValueError(f"invalid uploadId: {upload_id!r}")
+    return multipart_root(data_dir) / upload_id
+
+
+def multipart_init_path(data_dir: Path, upload_id: str) -> Path:
+    return multipart_dir(data_dir, upload_id) / "init.json"
+
+
+def multipart_part_path(data_dir: Path, upload_id: str, part_number: int) -> Path:
+    if part_number < 1 or part_number > 10_000:
+        raise ValueError(f"invalid part number: {part_number}")
+    return multipart_dir(data_dir, upload_id) / "parts" / f"{part_number:06d}.bin"
+
+
+def multipart_part_md5_path(data_dir: Path, upload_id: str, part_number: int) -> Path:
+    if part_number < 1 or part_number > 10_000:
+        raise ValueError(f"invalid part number: {part_number}")
+    return multipart_dir(data_dir, upload_id) / "parts" / f"{part_number:06d}.md5"
+
+
+def is_internal_name(name: str) -> bool:
+    """True if `name` is part of nanio's internal layout (skip in listings)."""
+    return name.startswith(".nanio")

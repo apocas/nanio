@@ -1,0 +1,99 @@
+name: Publish to PyPI
+
+# Triggered by pushing a version tag (e.g. `v0.1.0`). Also exposes a
+# workflow_dispatch trigger so you can re-run the publish job manually
+# without re-tagging if PyPI rejects the upload for transient reasons.
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+# Trusted publishing requires a short-lived OIDC token, scoped to this
+# workflow. The `id-token: write` permission is granted to the publish
+# job only — never workflow-wide.
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          python-version: "3.12"
+          enable-cache: true
+
+      - name: Sync dev deps
+        run: uv sync --frozen --extra dev
+
+      - name: Run tests
+        run: uv run pytest
+
+  build:
+    name: build sdist + wheel
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          python-version: "3.12"
+          enable-cache: true
+
+      - name: Build distributions
+        run: uv build
+
+      - name: Show built artifacts
+        run: ls -lh dist/
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: nanio-dist
+          path: dist/
+          if-no-files-found: error
+
+  publish-pypi:
+    name: publish to PyPI
+    needs: build
+    runs-on: ubuntu-latest
+    # Restrict publish to actual tag pushes — workflow_dispatch can still
+    # run the test+build jobs above for a dry-run, but won't publish
+    # unless triggered by a tag.
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+
+    # GitHub Environment provides an extra approval gate. Configure
+    # `pypi` under Settings → Environments and (optionally) add required
+    # reviewers there. The same name MUST be set on the trusted-publisher
+    # entry on PyPI.
+    environment:
+      name: pypi
+      url: https://pypi.org/p/nanio
+
+    permissions:
+      id-token: write    # OIDC token for trusted publishing
+      contents: read
+
+    steps:
+      - name: Download built distributions
+        uses: actions/download-artifact@v4
+        with:
+          name: nanio-dist
+          path: dist/
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          # No `password:` field — trusted publishing uses OIDC.
+          packages-dir: dist/
+          # Fail loudly if any artifact is malformed.
+          verbose: true
+          # Skip if the version already exists, so re-running a tag is safe.
+          skip-existing: true
