@@ -37,9 +37,10 @@ Nanio is **not** designed to defend against:
   both header-form and presigned-URL requests. Without it, an attacker
   who captured a signed request could replay it against any nanio
   instance regardless of host. (Security audit M1.)
-- Unknown access keys produce a generic `InvalidAccessKeyId` error
-  identical to a wrong-signature response, so attackers cannot
-  enumerate valid access keys. (Security audit M2.)
+- Unknown access keys return `InvalidAccessKeyId` and bad signatures
+  return `SignatureDoesNotMatch`, matching AWS S3 behavior. nanio does
+  not echo the access key itself or any signature material in either
+  response. (Security audit M2.)
 - Clock skew is enforced symmetrically at 15 minutes per the AWS spec.
 
 ### Streaming chunked decoder (`STREAMING-AWS4-HMAC-SHA256-PAYLOAD`)
@@ -189,9 +190,3 @@ the file owned by the nanio user and mode `0600`.
 If you find a security issue in nanio, please open a GitHub issue
 labeled `security` at `https://github.com/apocas/nanio/issues`. For
 sensitive findings, contact the maintainer privately first.
-
-## Audit history
-
-| Date | Audit |
-|---|---|
-| 2026-04-08 | Initial security audit covering auth, filesystem, and input parsing. 6 high-severity findings (H1–H6), 6 medium (M1–M6), 3 low (L1–L3). All HIGH and MEDIUM findings except H5 multi-tenant intermediate symlinks (defense in depth) and M6 (suffix Range header parsing) have remediation in `0.1.2`. |

@@ -92,10 +92,7 @@ class FilesystemStorage:
         return self._bucket_info(bucket)
 
     def delete_bucket(self, bucket: str) -> None:
-        validate_bucket_name(bucket)
-        bdir = bucket_dir(self._data_dir, bucket)
-        if not bdir.is_dir():
-            raise NoSuchBucket(resource=bucket)
+        bdir = self._require_bucket_dir(bucket)
         # The bucket is "empty" if the only entries are nanio internals.
         for entry in os.scandir(bdir):
             if not is_internal_name(entry.name):
@@ -106,16 +103,13 @@ class FilesystemStorage:
         shutil.rmtree(bdir)
 
     def head_bucket(self, bucket: str) -> BucketInfo:
-        validate_bucket_name(bucket)
-        bdir = bucket_dir(self._data_dir, bucket)
-        if not bdir.is_dir():
-            raise NoSuchBucket(resource=bucket)
+        self._require_bucket_dir(bucket)
         return self._bucket_info(bucket)
 
     def list_buckets(self) -> list[BucketInfo]:
         out: list[BucketInfo] = []
         for entry in os.scandir(self._data_dir):
-            if not entry.is_dir() or is_internal_name(entry.name):
+            if not entry.is_dir(follow_symlinks=False) or is_internal_name(entry.name):
                 continue
             try:
                 validate_bucket_name(entry.name)
@@ -131,6 +125,18 @@ class FilesystemStorage:
             name=bucket,
             created=datetime.fromtimestamp(st.st_ctime, tz=UTC),
         )
+
+    def _require_bucket_dir(self, bucket: str) -> Path:
+        validate_bucket_name(bucket)
+        bdir = bucket_dir(self._data_dir, bucket)
+        if not self._is_safe_bucket_dir(bdir):
+            raise NoSuchBucket(resource=bucket)
+        return bdir
+
+    def _is_safe_bucket_dir(self, bdir: Path) -> bool:
+        if not bdir.is_dir() or bdir.is_symlink():
+            return False
+        return not _path_escapes(self._data_dir, bdir)
 
     # ------------------------------------------------------------------
     # Object operations
@@ -149,10 +155,8 @@ class FilesystemStorage:
         cache_control: str | None = None,
         expected_md5: str | None = None,
     ) -> ObjectInfo:
-        validate_bucket_name(bucket)
+        self._require_bucket_dir(bucket)
         validate_object_key(key)
-        if not bucket_dir(self._data_dir, bucket).is_dir():
-            raise NoSuchBucket(resource=bucket)
 
         final = object_path(self._data_dir, bucket, key)
         # Refuse to create the parent directory tree if any existing
@@ -211,10 +215,8 @@ class FilesystemStorage:
         return info
 
     def head_object(self, bucket: str, key: str) -> ObjectInfo:
-        validate_bucket_name(bucket)
+        self._require_bucket_dir(bucket)
         validate_object_key(key)
-        if not bucket_dir(self._data_dir, bucket).is_dir():
-            raise NoSuchBucket(resource=bucket)
         opath = object_path(self._data_dir, bucket, key)
         # Refuse to read through any symlink that escapes the data dir.
         if opath.is_symlink() or (opath.exists() and _path_escapes(self._data_dir, opath)):
@@ -256,10 +258,8 @@ class FilesystemStorage:
         )
 
     def delete_object(self, bucket: str, key: str) -> None:
-        validate_bucket_name(bucket)
+        self._require_bucket_dir(bucket)
         validate_object_key(key)
-        if not bucket_dir(self._data_dir, bucket).is_dir():
-            raise NoSuchBucket(resource=bucket)
         opath = object_path(self._data_dir, bucket, key)
         # S3 DELETE is idempotent — deleting a non-existent key is success.
         with contextlib.suppress(FileNotFoundError):
@@ -279,10 +279,7 @@ class FilesystemStorage:
         continuation_token: str | None = None,
         start_after: str | None = None,
     ) -> ListResult:
-        validate_bucket_name(bucket)
-        bdir = bucket_dir(self._data_dir, bucket)
-        if not bdir.is_dir():
-            raise NoSuchBucket(resource=bucket)
+        bdir = self._require_bucket_dir(bucket)
         if max_keys < 0:
             raise InvalidArgument("max-keys must be >= 0")
         max_keys = min(max_keys, 1000)

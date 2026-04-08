@@ -121,9 +121,10 @@ tests/
     bypass it by catching exceptions in handlers and re-raising with a
     custom message that contains stack-trace info.
 
-12. **Never echo whether an access key exists.** The `InvalidAccessKeyId`
-    error MUST always use the default generic message — it must look
-    identical to `SignatureDoesNotMatch` from the client's perspective.
+12. **Never echo secrets or signature material in auth failures.** Keep
+   `InvalidAccessKeyId` vs `SignatureDoesNotMatch` wire behavior aligned
+   with AWS S3, but never include the access key itself, signing key,
+   or any signature fragments in the client-visible message.
 
 ## Running tests
 

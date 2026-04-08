@@ -312,9 +312,7 @@ def verify_header_auth(
     )
     expected = compute_signature(signing_key, string_to_sign)
     if not hmac.compare_digest(expected, parts.signature):
-        raise SignatureDoesNotMatch(
-            f"signature mismatch (got {parts.signature[:8]}…, expected {expected[:8]}…)"
-        )
+        raise SignatureDoesNotMatch()
 
     return VerifiedRequest(
         access_key=parts.access_key,
@@ -361,7 +359,10 @@ def verify_presigned_url(
         raise AuthorizationHeaderMalformed("missing X-Amz-Date")
     amz_date = parse_amz_date(amz_date_str)
 
-    expires = int(qparams.get("X-Amz-Expires", "3600"))
+    try:
+        expires = int(qparams.get("X-Amz-Expires", "3600"))
+    except ValueError as exc:
+        raise AuthorizationHeaderMalformed("X-Amz-Expires must be an integer") from exc
     if expires < 1 or expires > 7 * 24 * 3600:
         raise AuthorizationHeaderMalformed(f"X-Amz-Expires out of range: {expires}")
     now = now or datetime.now(tz=UTC)
@@ -410,9 +411,7 @@ def verify_presigned_url(
     signing_key = derive_signing_key(secret, date=date, region=region, service=service)
     expected = compute_signature(signing_key, string_to_sign)
     if not hmac.compare_digest(expected, given_signature):
-        raise SignatureDoesNotMatch(
-            f"presigned signature mismatch (got {given_signature[:8]}…, expected {expected[:8]}…)"
-        )
+        raise SignatureDoesNotMatch()
 
     return VerifiedRequest(
         access_key=access_key,

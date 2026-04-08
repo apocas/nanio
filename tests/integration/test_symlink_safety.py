@@ -19,7 +19,7 @@ import asyncio
 
 import pytest
 
-from nanio.errors import NoSuchKey
+from nanio.errors import NoSuchBucket, NoSuchKey
 from nanio.storage.filesystem import FilesystemStorage
 
 # These tests use the storage backend directly so we don't need to spin up
@@ -129,3 +129,32 @@ def test_listing_skips_symlinked_objects(storage, tmp_path):
         with pytest.raises(NoSuchKey):
             storage.head_object("widgets", "fake.txt")
     assert "real.txt" in keys
+
+
+def test_symlinked_bucket_root_skipped_from_list_buckets(tmp_path):
+    storage = FilesystemStorage(tmp_path)
+    storage.create_bucket("widgets")
+
+    outside = tmp_path.parent / "outside-bucket-list"
+    outside.mkdir(exist_ok=True)
+    (outside / "leaked.txt").write_text("escaped")
+    (tmp_path / "escaped-bucket").symlink_to(outside)
+
+    names = [bucket.name for bucket in storage.list_buckets()]
+    assert "widgets" in names
+    assert "escaped-bucket" not in names
+
+
+def test_symlinked_bucket_root_refused_for_bucket_operations(tmp_path):
+    storage = FilesystemStorage(tmp_path)
+
+    outside = tmp_path.parent / "outside-bucket-ops"
+    outside.mkdir(exist_ok=True)
+    (outside / "leaked.txt").write_text("escaped")
+    (tmp_path / "escaped-root").symlink_to(outside)
+
+    with pytest.raises(NoSuchBucket):
+        storage.head_bucket("escaped-root")
+
+    with pytest.raises(NoSuchBucket):
+        storage.list_objects("escaped-root")

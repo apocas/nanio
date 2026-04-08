@@ -298,7 +298,7 @@ def test_verify_rejects_tampered_signature():
     auth = headers["Authorization"]
     bad_auth = auth[:-1] + ("0" if auth[-1] != "0" else "1")
     headers["Authorization"] = bad_auth
-    with pytest.raises(SignatureDoesNotMatch):
+    with pytest.raises(SignatureDoesNotMatch) as ei:
         verify_header_auth(
             method="GET",
             path=path,
@@ -307,6 +307,7 @@ def test_verify_rejects_tampered_signature():
             secret_lookup=_lookup,
             now=parse_amz_date(headers["X-Amz-Date"]),
         )
+    assert ei.value.message_text == SignatureDoesNotMatch.message
 
 
 def test_verify_rejects_tampered_path():
@@ -389,6 +390,28 @@ def test_verify_presigned_rejects_empty_signed_headers():
         "&X-Amz-Signature=" + "0" * 64
     )
     with pytest.raises(AuthorizationHeaderMalformed, match="host"):
+        verify_presigned_url(
+            method="GET",
+            path="/widgets",
+            query=query,
+            headers={"host": "nanio.test"},
+            secret_lookup=_lookup,
+            now=parse_amz_date("20240101T120000Z"),
+        )
+
+
+def test_verify_presigned_rejects_non_integer_expires():
+    from nanio.auth.sigv4 import verify_presigned_url
+
+    query = (
+        "X-Amz-Algorithm=AWS4-HMAC-SHA256"
+        f"&X-Amz-Credential={ACCESS_KEY}/20240101/us-east-1/s3/aws4_request"
+        "&X-Amz-Date=20240101T120000Z"
+        "&X-Amz-Expires=abc"
+        "&X-Amz-SignedHeaders=host"
+        "&X-Amz-Signature=" + "0" * 64
+    )
+    with pytest.raises(AuthorizationHeaderMalformed, match="integer"):
         verify_presigned_url(
             method="GET",
             path="/widgets",

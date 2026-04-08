@@ -172,9 +172,7 @@ async def decode_aws_chunked(
         )
         expected = _sign_chunk(signing_key, sts)
         if not hmac.compare_digest(expected, chunk_sig):
-            raise SignatureDoesNotMatch(
-                f"chunk signature mismatch (got {chunk_sig[:8]}…, expected {expected[:8]}…)"
-            )
+            raise SignatureDoesNotMatch()
         prev_sig = chunk_sig
 
         if size == 0:
