@@ -174,6 +174,26 @@ class BadDigest(S3Error):
     http_status = 400
 
 
+class EntityTooLarge(S3Error):
+    code = "EntityTooLarge"
+    message = "Your proposed upload exceeds the maximum allowed size."
+    http_status = 400
+
+
+class MalformedXML(S3Error):
+    code = "MalformedXML"
+    message = (
+        "The XML you provided was not well-formed or did not validate against our published schema."
+    )
+    http_status = 400
+
+
+class MetadataTooLarge(S3Error):
+    code = "MetadataTooLarge"
+    message = "Your metadata headers exceed the maximum allowed metadata size."
+    http_status = 400
+
+
 class PreconditionFailed(S3Error):
     code = "PreconditionFailed"
     message = "At least one of the preconditions you specified did not hold."

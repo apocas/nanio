@@ -273,6 +273,13 @@ def verify_header_auth(
 
     parts = parse_authorization_header(auth)
 
+    # Per the AWS spec, `host` MUST always be in SignedHeaders. Without
+    # it, an attacker who captured a signed request could replay it
+    # against any nanio instance regardless of host (security audit
+    # finding M1).
+    if "host" not in parts.signed_headers:
+        raise AuthorizationHeaderMalformed("SignedHeaders must include host")
+
     amz_date_str = headers_lower.get("x-amz-date") or headers_lower.get("date")
     if not amz_date_str:
         raise AuthorizationHeaderMalformed("missing x-amz-date header")
@@ -281,7 +288,9 @@ def verify_header_auth(
 
     secret = secret_lookup(parts.access_key)
     if secret is None:
-        raise InvalidAccessKeyId(f"unknown access key: {parts.access_key}")
+        # Use the default generic message — never reveal whether the
+        # access key existed (security audit finding M2).
+        raise InvalidAccessKeyId()
 
     payload_hash = headers_lower.get("x-amz-content-sha256", EMPTY_SHA256)
 
@@ -363,13 +372,19 @@ def verify_presigned_url(
         raise RequestTimeTooSkewed("presigned URL is from the future")
 
     signed_headers = qparams.get("X-Amz-SignedHeaders", "host").split(";")
+    # Refuse signed-headers lists that omit `host`, including the empty
+    # case `X-Amz-SignedHeaders=` which splits to `[""]` (security audit
+    # finding M1).
+    if "host" not in signed_headers:
+        raise AuthorizationHeaderMalformed("SignedHeaders must include host")
     given_signature = qparams.get("X-Amz-Signature")
     if not given_signature:
         raise AuthorizationHeaderMalformed("missing X-Amz-Signature")
 
     secret = secret_lookup(access_key)
     if secret is None:
-        raise InvalidAccessKeyId(f"unknown access key: {access_key}")
+        # Generic message — never reveal access-key existence (M2).
+        raise InvalidAccessKeyId()
 
     # The canonical query string for presigned URLs excludes X-Amz-Signature.
     qparams_for_canon = {k: v for k, v in qparams.items() if k != "X-Amz-Signature"}

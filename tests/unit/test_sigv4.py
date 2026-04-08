@@ -332,7 +332,7 @@ def test_verify_unknown_access_key():
     def lookup(_k):
         return None
 
-    with pytest.raises(InvalidAccessKeyId):
+    with pytest.raises(InvalidAccessKeyId) as ei:
         verify_header_auth(
             method="GET",
             path=path,
@@ -340,6 +340,62 @@ def test_verify_unknown_access_key():
             headers=headers,
             secret_lookup=lookup,
             now=parse_amz_date(headers["X-Amz-Date"]),
+        )
+    # Security audit M2: error must use the GENERIC default message —
+    # never echo the access key, since that lets attackers enumerate
+    # valid keys by comparing this response to SignatureDoesNotMatch.
+    assert ACCESS_KEY not in ei.value.message_text
+    assert ei.value.message_text == InvalidAccessKeyId.message
+
+
+def test_verify_rejects_signed_headers_without_host():
+    """Security audit M1: a SignedHeaders list that omits `host` MUST be
+    rejected. Without it, an attacker who captured a signed request could
+    replay it against any nanio instance regardless of host."""
+    from nanio.auth.sigv4 import ALGORITHM
+
+    headers = {
+        "host": "nanio.test",
+        "x-amz-date": "20240101T120000Z",
+        "x-amz-content-sha256": EMPTY_SHA256,
+        "authorization": (
+            f"{ALGORITHM} Credential={ACCESS_KEY}/20240101/us-east-1/s3/aws4_request, "
+            "SignedHeaders=x-amz-date, "
+            "Signature=" + "0" * 64
+        ),
+    }
+    with pytest.raises(AuthorizationHeaderMalformed, match="host"):
+        verify_header_auth(
+            method="GET",
+            path="/widgets",
+            query="",
+            headers=headers,
+            secret_lookup=_lookup,
+            now=parse_amz_date("20240101T120000Z"),
+        )
+
+
+def test_verify_presigned_rejects_empty_signed_headers():
+    """Security audit M1: presigned URL with `X-Amz-SignedHeaders=` (empty)
+    splits to [""] which doesn't contain `host`. Must be rejected."""
+    from nanio.auth.sigv4 import verify_presigned_url
+
+    query = (
+        "X-Amz-Algorithm=AWS4-HMAC-SHA256"
+        f"&X-Amz-Credential={ACCESS_KEY}/20240101/us-east-1/s3/aws4_request"
+        "&X-Amz-Date=20240101T120000Z"
+        "&X-Amz-Expires=3600"
+        "&X-Amz-SignedHeaders="
+        "&X-Amz-Signature=" + "0" * 64
+    )
+    with pytest.raises(AuthorizationHeaderMalformed, match="host"):
+        verify_presigned_url(
+            method="GET",
+            path="/widgets",
+            query=query,
+            headers={"host": "nanio.test"},
+            secret_lookup=_lookup,
+            now=parse_amz_date("20240101T120000Z"),
         )
 
 

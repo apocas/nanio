@@ -234,6 +234,53 @@ def test_list_objects_basic(storage):
     assert result.common_prefixes == []
 
 
+def test_list_objects_survives_corrupt_sidecar(storage, tmp_path):
+    """A malformed sidecar JSON must NOT take down the whole listing.
+
+    Regression for security audit finding H6: previously the listing only
+    caught NoSuchKey/FileNotFoundError, so a json.JSONDecodeError or
+    KeyError from a corrupt sidecar would propagate and abort the listing.
+    Now we fall back to synthesize_metadata_from_stat for the bad object
+    and continue listing the rest.
+    """
+    from nanio.storage.paths import metadata_path
+
+    storage.create_bucket("widgets")
+    _put(storage, "widgets", "alpha.txt", body=b"hello")
+    _put(storage, "widgets", "beta.txt", body=b"world")
+    _put(storage, "widgets", "gamma.txt", body=b"!")
+
+    # Corrupt the sidecar for beta.txt — invalid JSON.
+    bad_path = metadata_path(tmp_path, "widgets", "beta.txt")
+    bad_path.write_text("{ this is not valid json")
+
+    result = storage.list_objects("widgets")
+    keys = [c.key for c in result.contents]
+    assert keys == ["alpha.txt", "beta.txt", "gamma.txt"]
+    # The bad-sidecar object should still report the right size
+    # (synthesized from stat).
+    beta = next(c for c in result.contents if c.key == "beta.txt")
+    assert beta.size == 5  # len(b"world")
+
+
+def test_list_objects_survives_sidecar_missing_required_field(storage, tmp_path):
+    """A sidecar that parses as JSON but is missing required fields must
+    not crash the listing either."""
+    from nanio.storage.paths import metadata_path
+
+    storage.create_bucket("widgets")
+    _put(storage, "widgets", "alpha.txt", body=b"abc")
+
+    # Write a JSON sidecar that lacks "size" and "last_modified".
+    bad_path = metadata_path(tmp_path, "widgets", "alpha.txt")
+    bad_path.write_text('{"etag": "deadbeef"}')
+
+    result = storage.list_objects("widgets")
+    keys = [c.key for c in result.contents]
+    assert keys == ["alpha.txt"]
+    assert result.contents[0].size == 3
+
+
 def test_list_objects_with_prefix(storage):
     storage.create_bucket("widgets")
     _put(storage, "widgets", "logs/2026/jan.txt")

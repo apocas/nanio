@@ -94,3 +94,40 @@ async def test_error_response_xml_well_formed(asgi_client):
     assert "Code" in tags
     assert "Message" in tags
     assert "RequestId" in tags
+
+
+@pytest.mark.asyncio
+async def test_unexpected_exception_returns_xml_internal_error(app):
+    """Security audit M3: any non-S3Error exception must be caught by the
+    catch-all handler and serialized to a generic InternalError XML body —
+    never leaking the Python exception class or message to the client.
+
+    Uses a dedicated httpx client with `raise_app_exceptions=False` because
+    Starlette's ServerErrorMiddleware deliberately re-raises after sending
+    the 500 so test clients can see the underlying error. Real HTTP
+    clients only ever see the response, never the re-raised exception.
+    """
+    from httpx import ASGITransport, AsyncClient
+    from starlette.routing import Route
+
+    async def boom(request):
+        raise RuntimeError("nuclear codes: 12345")
+
+    # Inject a route that always raises a non-S3Error.
+    app.router.routes.insert(0, Route("/__boom__", boom))
+
+    transport = ASGITransport(app=app, raise_app_exceptions=False)
+    async with AsyncClient(transport=transport, base_url="http://nanio.test") as client:
+        r = await client.get("/__boom__")
+
+    assert r.status_code == 500
+    body = r.content.decode()
+    # Generic body, no leaked exception info.
+    assert "InternalError" in body
+    assert "RuntimeError" not in body
+    assert "nuclear codes" not in body
+    assert "12345" not in body
+    # And it must be valid XML in the standard format.
+    root = ET.fromstring(r.content)
+    assert root.tag == "Error"
+    assert root.find("Code").text == "InternalError"

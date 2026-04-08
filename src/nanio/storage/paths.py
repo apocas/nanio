@@ -14,6 +14,7 @@ single-file change.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from nanio.keys import safe_join
@@ -21,6 +22,30 @@ from nanio.keys import safe_join
 META_DIR_NAME = ".nanio-meta"
 MULTIPART_ROOT_NAME = ".nanio"
 MULTIPART_SUBDIR = "multipart"
+
+
+def assert_inside_data_dir(data_dir: Path, target: Path) -> None:
+    """Verify that `target`, after resolving symlinks, stays inside `data_dir`.
+
+    This is the second line of defense against symlink attacks (security
+    audit finding H5). The first line is `O_NOFOLLOW` on every `os.open`,
+    which catches symlinks at the leaf. This catches symlinks at any
+    intermediate component by realpath-ing the whole tree and comparing.
+
+    Raises `PermissionError` if `target` resolves to anything outside
+    `data_dir`. The caller should translate that into an `AccessDenied`
+    S3 error if appropriate.
+    """
+    data_real = os.path.realpath(data_dir)
+    target_real = os.path.realpath(target)
+    # `commonpath` works for both — and is portable.
+    try:
+        common = os.path.commonpath([data_real, target_real])
+    except ValueError:
+        # Different drives on Windows; we don't support Windows but be safe.
+        raise PermissionError(f"path escape: {target} resolves outside {data_dir}") from None
+    if common != data_real:
+        raise PermissionError(f"path escape: {target} resolves outside {data_dir}")
 
 
 def bucket_dir(data_dir: Path, bucket: str) -> Path:

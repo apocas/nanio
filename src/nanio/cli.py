@@ -83,6 +83,16 @@ def build_parser() -> argparse.ArgumentParser:
         default=True,
         help="Disable per-request access logs",
     )
+    serve.add_argument(
+        "--gc-abandoned-uploads",
+        action="store_true",
+        default=False,
+        help=(
+            "Delete (instead of just warn about) multipart uploads older than "
+            "7 days at startup. Use this on a periodic schedule (cron, systemd "
+            "timer) on the host that owns the data dir."
+        ),
+    )
     serve.set_defaults(func=_cmd_serve)
 
     return parser
@@ -142,17 +152,32 @@ def _cmd_serve(args: argparse.Namespace) -> int:
         settings.workers,
     )
 
-    # Warn about abandoned multipart uploads at startup.
+    # Handle abandoned multipart uploads at startup.
+    #
+    # Without --gc-abandoned-uploads we only WARN — operators may want to
+    # inspect the upload dirs first. With the flag, we delete them on the
+    # spot. Either way the scan is best-effort and never aborts startup.
     try:
         from nanio.storage.multipart import MultipartManager
 
-        old = MultipartManager(data_dir).warn_about_abandoned_uploads()
-        if old:
-            log.warning(
-                "%d abandoned multipart upload(s) older than 7 days under %s",
-                len(old),
-                data_dir,
-            )
+        manager = MultipartManager(data_dir)
+        if args.gc_abandoned_uploads:
+            deleted = manager.gc_abandoned_uploads()
+            if deleted:
+                log.warning(
+                    "deleted %d abandoned multipart upload(s) older than 7 days under %s",
+                    len(deleted),
+                    data_dir,
+                )
+        else:
+            old = manager.warn_about_abandoned_uploads()
+            if old:
+                log.warning(
+                    "%d abandoned multipart upload(s) older than 7 days under %s "
+                    "(re-run with --gc-abandoned-uploads to delete)",
+                    len(old),
+                    data_dir,
+                )
     except Exception:
         log.exception("failed to scan for abandoned multipart uploads (non-fatal)")
 

@@ -95,6 +95,35 @@ tests/
      trust the client; if they lie the signature won't match.
    - For `STREAMING-AWS4-HMAC-SHA256-PAYLOAD`, the chunked decoder
      verifies each chunk's signature in `auth/chunked.py`.
+   - The `host` header MUST always be in `SignedHeaders`. Both
+     `verify_header_auth` and `verify_presigned_url` enforce this.
+
+9. **Every `os.open` in the storage layer MUST pass `O_NOFOLLOW`.**
+   This is the file-leaf defense against symlink attacks (`docs/security.md`,
+   audit finding H5). Combined with `assert_inside_data_dir` on parent
+   directories before mkdir/open, it stops attackers who can plant
+   symlinks under `--data-dir` from reading or writing arbitrary files.
+   If you add a new code path that opens a file in the storage layer,
+   add the flag — and add a test in `tests/integration/test_symlink_safety.py`.
+
+10. **Every XML body parsed from a request MUST go through the bounded
+    helper.** Use `nanio.handlers._body.read_bounded_body` to consume
+    the body and `parse_xml_safely` to parse it. Never call
+    `await request.body()` followed by `xml.etree.ElementTree.fromstring`
+    directly — that's vulnerable to billion-laughs and unbounded
+    buffering. The bounded helper caps at 1 MiB; if you genuinely need
+    more, raise the cap explicitly with a justification in the PR
+    description.
+
+11. **Never echo internal exception details to clients.** The catch-all
+    handler in `app.py` translates any non-S3Error to a generic
+    `InternalError` XML body and logs the traceback server-side. Don't
+    bypass it by catching exceptions in handlers and re-raising with a
+    custom message that contains stack-trace info.
+
+12. **Never echo whether an access key exists.** The `InvalidAccessKeyId`
+    error MUST always use the default generic message — it must look
+    identical to `SignatureDoesNotMatch` from the client's perspective.
 
 ## Running tests
 

@@ -18,19 +18,21 @@ worker function. Each worker is small and testable in isolation.
 
 from __future__ import annotations
 
-from xml.etree import ElementTree as ET
-
 from starlette.requests import Request
 from starlette.responses import Response
 
 from nanio.app_state import get_settings, get_storage
-from nanio.errors import InvalidRequest, S3Error
+from nanio.errors import MalformedXML, S3Error
+from nanio.handlers._body import parse_xml_safely, read_bounded_body
 from nanio.handlers.multipart import list_multipart_uploads_for_bucket
 from nanio.xml import (
     delete_result_xml,
     list_objects_v2_xml,
     location_constraint_xml,
 )
+
+# AWS S3 caps DeleteObjects at 1000 keys per request.
+MAX_DELETE_KEYS = 1000
 
 
 async def dispatch_bucket(request: Request) -> Response:
@@ -91,13 +93,8 @@ async def get_bucket_location(request: Request, bucket: str) -> Response:
 
 async def delete_objects(request: Request, bucket: str) -> Response:
     storage = get_storage(request)
-    body = await request.body()
-    if not body:
-        raise InvalidRequest("DeleteObjects body is empty")
-    try:
-        root = ET.fromstring(body)
-    except ET.ParseError as exc:
-        raise InvalidRequest(f"DeleteObjects body is malformed: {exc}") from exc
+    body = await read_bounded_body(request)
+    root = parse_xml_safely(body)
 
     keys: list[str] = []
     for elem in root:
@@ -106,8 +103,10 @@ async def delete_objects(request: Request, bucket: str) -> Response:
             continue
         key_el = next((c for c in elem if c.tag.split("}", 1)[-1] == "Key"), None)
         if key_el is None or key_el.text is None:
-            raise InvalidRequest("Object missing Key")
+            raise MalformedXML("Object missing Key")
         keys.append(key_el.text)
+        if len(keys) > MAX_DELETE_KEYS:
+            raise MalformedXML(f"DeleteObjects supports at most {MAX_DELETE_KEYS} keys per request")
 
     deleted: list[str] = []
     errors: list[tuple[str, str, str]] = []

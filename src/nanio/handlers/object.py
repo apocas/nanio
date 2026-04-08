@@ -10,7 +10,7 @@ from starlette.requests import Request
 from starlette.responses import Response, StreamingResponse
 
 from nanio.app_state import get_storage
-from nanio.errors import InvalidArgument, InvalidRequest
+from nanio.errors import InvalidArgument, InvalidRequest, MetadataTooLarge
 from nanio.handlers.multipart import (
     abort_multipart_upload,
     complete_multipart_upload,
@@ -23,6 +23,11 @@ from nanio.xml import copy_object_result_xml
 
 USER_META_PREFIX = "x-amz-meta-"
 _RANGE_RE = re.compile(r"^bytes=(\d+)-(\d*)$")
+
+# AWS S3 caps user metadata at 2 KiB total (sum of header name + value
+# lengths across all x-amz-meta-* headers). nanio enforces the same cap
+# (security audit finding M5).
+MAX_USER_METADATA_BYTES = 2 * 1024
 
 
 async def dispatch_object(request: Request) -> Response:
@@ -61,9 +66,17 @@ async def dispatch_object(request: Request) -> Response:
 
 def _extract_user_metadata(request: Request) -> dict[str, str]:
     out: dict[str, str] = {}
+    total_bytes = 0
     for raw_key, value in request.headers.items():
-        if raw_key.lower().startswith(USER_META_PREFIX):
-            out[raw_key.lower()] = value
+        lower = raw_key.lower()
+        if not lower.startswith(USER_META_PREFIX):
+            continue
+        out[lower] = value
+        total_bytes += len(lower) + len(value)
+        if total_bytes > MAX_USER_METADATA_BYTES:
+            raise MetadataTooLarge(
+                f"user metadata exceeds maximum of {MAX_USER_METADATA_BYTES} bytes"
+            )
     return out
 
 

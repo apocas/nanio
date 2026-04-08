@@ -7,6 +7,7 @@ leaves a partially-written sidecar.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 from datetime import UTC, datetime
@@ -45,20 +46,36 @@ def _from_dict(key: str, d: dict) -> ObjectInfo:
 
 
 def write_metadata(path: Path, info: ObjectInfo) -> None:
-    """Atomically write the sidecar JSON file at `path`."""
+    """Atomically write the sidecar JSON file at `path`.
+
+    Uses O_NOFOLLOW so a pre-existing symlink at the sidecar path is not
+    silently followed (security audit finding H5). Combined with O_EXCL
+    on the temp file, the writer always owns the inode it just created.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = json.dumps(_to_dict(info), separators=(",", ":")).encode("utf-8")
     tmp = path.with_suffix(path.suffix + ".tmp")
-    with open(tmp, "wb") as f:
-        f.write(payload)
-        f.flush()
-        os.fsync(f.fileno())
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o644)
+    try:
+        with os.fdopen(fd, "wb", closefd=True) as f:
+            f.write(payload)
+            f.flush()
+            os.fsync(f.fileno())
+    except BaseException:
+        with contextlib.suppress(FileNotFoundError):
+            os.unlink(tmp)
+        raise
     os.replace(tmp, path)
 
 
 def read_metadata(path: Path, key: str) -> ObjectInfo:
-    """Load and parse the sidecar JSON file at `path`. Raises FileNotFoundError."""
-    with open(path, "rb") as f:
+    """Load and parse the sidecar JSON file at `path`.
+
+    Refuses to follow a leaf symlink so a malicious sidecar replacement
+    cannot trick the listing into reading an arbitrary file.
+    """
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    with os.fdopen(fd, "rb", closefd=True) as f:
         d = json.loads(f.read().decode("utf-8"))
     return _from_dict(key, d)
 

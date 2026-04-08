@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import contextlib
+import logging
 import os
 import shutil
 import uuid
@@ -45,6 +46,7 @@ from nanio.storage.metadata import (
     write_metadata,
 )
 from nanio.storage.paths import (
+    assert_inside_data_dir,
     bucket_dir,
     is_internal_name,
     metadata_path,
@@ -52,6 +54,8 @@ from nanio.storage.paths import (
     multipart_root,
     object_path,
 )
+
+_log = logging.getLogger("nanio.storage")
 
 
 class FilesystemStorage:
@@ -151,14 +155,24 @@ class FilesystemStorage:
             raise NoSuchBucket(resource=bucket)
 
         final = object_path(self._data_dir, bucket, key)
+        # Refuse to create the parent directory tree if any existing
+        # component is a symlink leading outside the data dir (security
+        # audit finding H5).
+        if final.parent.exists():
+            assert_inside_data_dir(self._data_dir, final.parent)
         final.parent.mkdir(parents=True, exist_ok=True)
+        # Re-check after mkdir in case mkdir followed a symlink.
+        assert_inside_data_dir(self._data_dir, final.parent)
 
         # Stage to a temp file inside the bucket so the rename is on the
         # same filesystem and therefore atomic.
         tmp = final.parent / f".tmp.{uuid.uuid4().hex}"
 
         hasher = StreamingMd5()
-        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+        # O_NOFOLLOW means that if `tmp` somehow already exists as a
+        # symlink (race window), open fails with ELOOP. Combined with
+        # O_EXCL it's a strong guarantee we own the inode we just created.
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o644)
         try:
             try:
                 async for chunk in body:
@@ -202,6 +216,9 @@ class FilesystemStorage:
         if not bucket_dir(self._data_dir, bucket).is_dir():
             raise NoSuchBucket(resource=bucket)
         opath = object_path(self._data_dir, bucket, key)
+        # Refuse to read through any symlink that escapes the data dir.
+        if opath.is_symlink() or (opath.exists() and _path_escapes(self._data_dir, opath)):
+            raise NoSuchKey(resource=f"{bucket}/{key}")
         if not opath.is_file():
             raise NoSuchKey(resource=f"{bucket}/{key}")
         meta = self._read_or_synthesize_metadata(bucket, key, opath)
@@ -286,12 +303,25 @@ class FilesystemStorage:
         for full_key in _walk_keys(bdir, prefix, delimiter, common):
             if resume_after is not None and full_key <= resume_after:
                 continue
+            opath = object_path(self._data_dir, bucket, full_key)
             try:
-                info = self._read_or_synthesize_metadata(
-                    bucket, full_key, object_path(self._data_dir, bucket, full_key)
-                )
+                info = self._read_or_synthesize_metadata(bucket, full_key, opath)
             except (NoSuchKey, FileNotFoundError):
+                # Object disappeared between scandir and metadata read; skip it.
                 continue
+            except (ValueError, KeyError, OSError) as exc:
+                # Sidecar JSON is corrupt / missing fields / unreadable. Don't
+                # let one bad sidecar take down the whole listing — fall back
+                # to synthesized metadata so the object still appears.
+                _log.warning(
+                    "bucket=%s key=%s: sidecar metadata unreadable (%s); using synthesized",
+                    bucket,
+                    full_key,
+                    exc,
+                )
+                if not opath.is_file():
+                    continue
+                info = synthesize_metadata_from_stat(opath, full_key)
             contents.append(info)
             if len(contents) >= max_keys:
                 is_truncated = True
@@ -348,6 +378,20 @@ class FilesystemStorage:
             if not opath.is_file():
                 raise NoSuchKey(resource=f"{bucket}/{key}") from None
             return synthesize_metadata_from_stat(opath, key)
+        except (ValueError, KeyError, OSError) as exc:
+            # Sidecar exists but can't be read or parsed (symlink with
+            # O_NOFOLLOW → ELOOP, malformed JSON, missing fields). Don't
+            # trust the file — fall back to synthesized metadata derived
+            # from the real object's stat.
+            _log.warning(
+                "bucket=%s key=%s: sidecar metadata unreadable (%s); using synthesized",
+                bucket,
+                key,
+                exc,
+            )
+            if not opath.is_file():
+                raise NoSuchKey(resource=f"{bucket}/{key}") from None
+            return synthesize_metadata_from_stat(opath, key)
 
 
 # ----------------------------------------------------------------------
@@ -380,7 +424,9 @@ def _stream_pread(path: Path, offset: int, length: int, chunk_size: int) -> Asyn
     """Async generator that streams `length` bytes starting at `offset`."""
 
     async def _gen() -> AsyncIterator[bytes]:
-        fd = await asyncio.to_thread(os.open, path, os.O_RDONLY)
+        # O_NOFOLLOW so a leaf symlink can never be opened — defends
+        # against symlink-target disclosure (security audit H5).
+        fd = await asyncio.to_thread(os.open, path, os.O_RDONLY | os.O_NOFOLLOW)
         try:
             remaining = length
             pos = offset
@@ -399,12 +445,27 @@ def _stream_pread(path: Path, offset: int, length: int, chunk_size: int) -> Asyn
 
 
 def _sync_iter_file(path: Path, chunk_size: int) -> Iterator[bytes]:
-    with open(path, "rb") as f:
-        while True:
-            chunk = f.read(chunk_size)
-            if not chunk:
-                return
-            yield chunk
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    try:
+        with os.fdopen(fd, "rb", closefd=True) as f:
+            while True:
+                chunk = f.read(chunk_size)
+                if not chunk:
+                    return
+                yield chunk
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.close(fd)
+        raise
+
+
+def _path_escapes(data_dir: Path, target: Path) -> bool:
+    """Return True if `target` realpaths to a location outside `data_dir`."""
+    try:
+        assert_inside_data_dir(data_dir, target)
+    except PermissionError:
+        return True
+    return False
 
 
 def _prune_empty_dirs(start: Path, *, stop_at: Path) -> None:

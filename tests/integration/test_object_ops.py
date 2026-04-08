@@ -55,6 +55,32 @@ async def test_user_metadata_round_trip(asgi_client):
 
 
 @pytest.mark.asyncio
+async def test_user_metadata_too_large_rejected(asgi_client):
+    """Security audit M5: x-amz-meta-* headers must be capped at 2 KiB total.
+
+    Without the cap an attacker could send hundreds of huge metadata
+    headers per PUT and burn memory + sidecar disk space.
+    """
+    huge_value = "x" * 3000  # one header > 2 KiB on its own
+    r = await asgi_client.put(
+        "/widgets/k",
+        content=b"hello",
+        headers={"x-amz-meta-blob": huge_value},
+    )
+    assert r.status_code == 400
+    assert b"MetadataTooLarge" in r.content
+
+
+@pytest.mark.asyncio
+async def test_user_metadata_at_cap_succeeds(asgi_client):
+    """A PUT just under the 2 KiB cap must succeed."""
+    # Header name is "x-amz-meta-x" (12 bytes); pad value so total ≈ 2 KiB - 100.
+    headers = {"x-amz-meta-x": "v" * (2 * 1024 - 12 - 100)}
+    r = await asgi_client.put("/widgets/k", content=b"hi", headers=headers)
+    assert r.status_code == 200
+
+
+@pytest.mark.asyncio
 async def test_get_missing_object(asgi_client):
     r = await asgi_client.get("/widgets/nope")
     assert r.status_code == 404

@@ -19,10 +19,12 @@ service any subsequent request for the same upload.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import os
 import secrets
 import shutil
+import uuid
 from collections.abc import AsyncIterator, Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -92,7 +94,15 @@ class MultipartManager:
         upload_id = new_upload_id()
         d = multipart_dir(self._data_dir, upload_id)
         (d / "parts").mkdir(parents=True, exist_ok=False)
-        with open(multipart_init_path(self._data_dir, upload_id), "w", encoding="utf-8") as f:
+        init_path = multipart_init_path(self._data_dir, upload_id)
+        # O_NOFOLLOW + O_EXCL: we just created the parent dir, so the
+        # init.json must be a fresh inode we own.
+        fd = os.open(
+            init_path,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+            0o644,
+        )
+        with os.fdopen(fd, "w", encoding="utf-8", closefd=True) as f:
             json.dump(_init_to_dict(init), f)
         return upload_id
 
@@ -106,7 +116,12 @@ class MultipartManager:
         path = multipart_init_path(self._data_dir, upload_id)
         if not path.is_file():
             raise NoSuchUpload(resource=upload_id)
-        with open(path, encoding="utf-8") as f:
+        # O_NOFOLLOW: refuse to read through a symlink at the leaf.
+        try:
+            fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+        except OSError as exc:
+            raise NoSuchUpload(resource=upload_id) from exc
+        with os.fdopen(fd, encoding="utf-8", closefd=True) as f:
             return _dict_to_init(json.load(f))
 
     # ------------------------------------------------------------------
@@ -130,7 +145,8 @@ class MultipartManager:
 
         tmp = target.with_suffix(".bin.tmp")
         hasher = StreamingMd5()
-        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o644)
+        # O_NOFOLLOW so a stale symlink can't redirect the part write.
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o644)
         try:
             try:
                 async for chunk in body:
@@ -221,6 +237,32 @@ class MultipartManager:
                 old.append((upload_id, init.initiated))
         return old
 
+    def gc_abandoned_uploads(self, *, max_age_seconds: int = 7 * 24 * 3600) -> list[str]:
+        """Delete every multipart upload directory older than `max_age_seconds`.
+
+        Returns the list of upload_ids that were deleted. Used to address
+        security audit finding M4: without this, an attacker can create
+        multipart uploads forever and burn an inode + ~1 KB per upload
+        with no way to reclaim them. Called once at startup from `cli.py`
+        and on demand via `nanio serve --gc-abandoned-uploads`.
+
+        Errors during individual deletes are logged but do not abort the
+        sweep — best-effort cleanup.
+        """
+        now = datetime.now(tz=UTC)
+        deleted: list[str] = []
+        for upload_id, init in self.list_uploads():
+            age = (now - init.initiated).total_seconds()
+            if age <= max_age_seconds:
+                continue
+            try:
+                d = multipart_dir(self._data_dir, upload_id)
+                shutil.rmtree(d, ignore_errors=False)
+                deleted.append(upload_id)
+            except OSError:
+                continue
+        return deleted
+
     # ------------------------------------------------------------------
     # Complete
     # ------------------------------------------------------------------
@@ -260,31 +302,48 @@ class MultipartManager:
             on_disk_parts.append((pn, path, md5_hex, path.stat().st_size))
 
         # Concatenate parts into an assembled scratch file inside the upload dir.
-        assembled = d / "assembled.tmp"
-        with open(assembled, "wb") as out_f:
-            out_fd = out_f.fileno()
-            for _, path, _, size in on_disk_parts:
-                with open(path, "rb") as in_f:
-                    in_fd = in_f.fileno()
-                    remaining = size
-                    offset = 0
-                    while remaining > 0:
-                        sent = os.sendfile(out_fd, in_fd, offset, remaining)
-                        if sent == 0:
-                            break
-                        offset += sent
-                        remaining -= sent
-            out_f.flush()
-            os.fsync(out_fd)
+        # The filename is unique per call so two concurrent Complete requests
+        # on the same uploadId can't truncate each other's writes (security
+        # audit finding H1). O_NOFOLLOW prevents a symlink from redirecting
+        # the write or read (security audit finding H5).
+        assembled = d / f"assembled.{uuid.uuid4().hex}.tmp"
+        try:
+            out_fd = os.open(
+                assembled,
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                0o644,
+            )
+            with os.fdopen(out_fd, "wb", closefd=True) as out_f:
+                out_fd = out_f.fileno()
+                for _, path, _, size in on_disk_parts:
+                    in_fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+                    with os.fdopen(in_fd, "rb", closefd=True) as in_f:
+                        in_fd = in_f.fileno()
+                        remaining = size
+                        offset = 0
+                        while remaining > 0:
+                            sent = os.sendfile(out_fd, in_fd, offset, remaining)
+                            if sent == 0:
+                                break
+                            offset += sent
+                            remaining -= sent
+                out_f.flush()
+                os.fsync(out_fd)
 
-        # Final etag is the multipart format.
-        final_etag = multipart_etag(md5 for _, _, md5, _ in on_disk_parts)
-        total_size = sum(size for _, _, _, size in on_disk_parts)
+            # Final etag is the multipart format.
+            final_etag = multipart_etag(md5 for _, _, md5, _ in on_disk_parts)
+            total_size = sum(size for _, _, _, size in on_disk_parts)
 
-        # Move assembled file into the bucket. Atomic on the same FS.
-        final_path = object_path(self._data_dir, init.bucket, init.key)
-        final_path.parent.mkdir(parents=True, exist_ok=True)
-        os.replace(assembled, final_path)
+            # Move assembled file into the bucket. Atomic on the same FS.
+            final_path = object_path(self._data_dir, init.bucket, init.key)
+            final_path.parent.mkdir(parents=True, exist_ok=True)
+            os.replace(assembled, final_path)
+        except BaseException:
+            # If anything blew up before the rename, our scratch file is
+            # still inside the upload dir — clean it up so we don't leak.
+            with contextlib.suppress(FileNotFoundError):
+                assembled.unlink()
+            raise
 
         info = ObjectInfo(
             key=init.key,

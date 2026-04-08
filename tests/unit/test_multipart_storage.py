@@ -170,14 +170,13 @@ def test_list_uploads(manager):
     assert u1 in ids and u2 in ids
 
 
-def test_warn_about_abandoned_uploads(manager):
-    """Anything older than max_age should be reported."""
-    upload_id = manager.create(MultipartInit(bucket="widgets", key="k"))
-    # Force an ancient initiated time by rewriting init.json
+def _make_ancient_upload(manager, key: str = "k", days_old: int = 30) -> str:
+    """Create a multipart upload then back-date its init.json."""
+    upload_id = manager.create(MultipartInit(bucket="widgets", key=key))
     init = manager.load_init(upload_id)
     from datetime import datetime, timedelta
 
-    init.initiated = datetime.now(tz=UTC) - timedelta(days=30)
+    init.initiated = datetime.now(tz=UTC) - timedelta(days=days_old)
     import json
 
     from nanio.storage.multipart import _init_to_dict
@@ -186,9 +185,36 @@ def test_warn_about_abandoned_uploads(manager):
     p = multipart_init_path(manager._data_dir, upload_id)
     with open(p, "w") as f:
         json.dump(_init_to_dict(init), f)
+    return upload_id
 
+
+def test_warn_about_abandoned_uploads(manager):
+    """Anything older than max_age should be reported."""
+    upload_id = _make_ancient_upload(manager)
     abandoned = manager.warn_about_abandoned_uploads(max_age_seconds=7 * 24 * 3600)
     assert any(uid == upload_id for uid, _ in abandoned)
+
+
+def test_gc_abandoned_uploads_deletes_old(manager):
+    """Security audit M4: gc_abandoned_uploads must actually delete old
+    upload dirs and return their IDs."""
+    old_id = _make_ancient_upload(manager, key="old")
+    young_id = manager.create(MultipartInit(bucket="widgets", key="young"))
+
+    deleted = manager.gc_abandoned_uploads(max_age_seconds=7 * 24 * 3600)
+    assert old_id in deleted
+    assert young_id not in deleted
+
+    # Old upload's dir is gone; young one is still there.
+    with pytest.raises(NoSuchUpload):
+        manager.load_init(old_id)
+    manager.load_init(young_id)  # must not raise
+
+
+def test_gc_abandoned_uploads_empty_when_none_old(manager):
+    manager.create(MultipartInit(bucket="widgets", key="k"))
+    deleted = manager.gc_abandoned_uploads(max_age_seconds=7 * 24 * 3600)
+    assert deleted == []
 
 
 def test_concurrent_part_uploads(manager):
@@ -206,3 +232,63 @@ def test_concurrent_part_uploads(manager):
     asyncio.run(go())
     parts = manager.list_parts(upload_id)
     assert [p.part_number for p in parts] == list(range(1, 51))
+
+
+def test_concurrent_complete_does_not_corrupt(manager, storage):
+    """Two concurrent Complete calls on the same uploadId must produce a
+    valid object — never a corrupted concatenation.
+
+    Regression for security audit finding H1: previously the scratch file
+    `assembled.tmp` had a fixed name, so two parallel Completes would both
+    open it with O_TRUNC, interleave their sendfile writes into the same
+    inode, and rename the result to the final path. The "winning" rename
+    moved a corrupted file into place. The fix names the scratch file
+    uniquely per Complete invocation.
+
+    We can't easily multi-thread the manager (it's not async), so this
+    test launches multiple Complete operations concurrently via threads.
+    """
+    import hashlib
+    import threading
+
+    upload_id = manager.create(MultipartInit(bucket="widgets", key="big.bin"))
+    part_a = b"A" * 1024
+    part_b = b"B" * 1024
+    p1 = asyncio.run(manager.upload_part(upload_id, 1, _stream(part_a)))
+    p2 = asyncio.run(manager.upload_part(upload_id, 2, _stream(part_b)))
+    expected = part_a + part_b
+    expected_md5 = hashlib.md5(expected, usedforsecurity=False).hexdigest()
+
+    # Run several Complete calls concurrently. They all reference the same
+    # parts list, so the result must always be the byte-identical
+    # concatenation. Some calls will fail with NoSuchUpload after a peer
+    # has deleted the upload dir — that's fine, the survivors must all
+    # produce the right object.
+    errors: list[Exception] = []
+
+    def go():
+        try:
+            manager.complete(upload_id, [(1, p1.etag), (2, p2.etag)])
+        except Exception as exc:
+            errors.append(exc)
+
+    threads = [threading.Thread(target=go) for _ in range(5)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    # The final object must exist and have the right content.
+    head = storage.head_object("widgets", "big.bin")
+    assert head.size == len(expected)
+
+    async def _read():
+        result = await storage.get_object("widgets", "big.bin")
+        out = b""
+        async for chunk in result.body:
+            out += chunk
+        return out
+
+    body = asyncio.run(_read())
+    assert body == expected
+    assert hashlib.md5(body, usedforsecurity=False).hexdigest() == expected_md5

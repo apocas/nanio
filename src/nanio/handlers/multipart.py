@@ -14,17 +14,16 @@ which is constructed against the same `data_dir` as the storage backend.
 
 from __future__ import annotations
 
-from xml.etree import ElementTree as ET
-
 from starlette.requests import Request
 from starlette.responses import Response
 
 from nanio.app_state import get_settings
 from nanio.errors import (
     InvalidArgument,
-    InvalidRequest,
+    MalformedXML,
     NoSuchBucket,
 )
+from nanio.handlers._body import parse_xml_safely, read_bounded_body
 from nanio.storage.multipart import (
     MultipartInit,
     MultipartManager,
@@ -39,6 +38,14 @@ from nanio.xml import (
 
 USER_META_PREFIX = "x-amz-meta-"
 
+# AWS S3 caps CompleteMultipartUpload at 10 000 parts.
+MAX_COMPLETE_PARTS = 10_000
+
+# AWS S3 caps user metadata at 2 KiB total. Mirror that here so the cap
+# applies to multipart Create the same way it does to plain PUT (security
+# audit finding M5).
+MAX_USER_METADATA_BYTES = 2 * 1024
+
 
 def _manager(request: Request) -> MultipartManager:
     settings = get_settings(request)
@@ -46,9 +53,21 @@ def _manager(request: Request) -> MultipartManager:
 
 
 def _extract_user_metadata(request: Request) -> dict[str, str]:
-    return {
-        k.lower(): v for k, v in request.headers.items() if k.lower().startswith(USER_META_PREFIX)
-    }
+    out: dict[str, str] = {}
+    total_bytes = 0
+    for raw_key, value in request.headers.items():
+        lower = raw_key.lower()
+        if not lower.startswith(USER_META_PREFIX):
+            continue
+        out[lower] = value
+        total_bytes += len(lower) + len(value)
+        if total_bytes > MAX_USER_METADATA_BYTES:
+            from nanio.errors import MetadataTooLarge
+
+            raise MetadataTooLarge(
+                f"user metadata exceeds maximum of {MAX_USER_METADATA_BYTES} bytes"
+            )
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -108,7 +127,7 @@ async def complete_multipart_upload(request: Request, bucket: str, key: str) -> 
     upload_id = request.query_params.get("uploadId")
     if not upload_id:
         raise InvalidArgument("CompleteMultipartUpload requires uploadId")
-    body = await request.body()
+    body = await read_bounded_body(request)
     parts = _parse_complete_body(body)
 
     manager = _manager(request)
@@ -121,12 +140,7 @@ async def complete_multipart_upload(request: Request, bucket: str, key: str) -> 
 
 
 def _parse_complete_body(body: bytes) -> list[tuple[int, str]]:
-    if not body:
-        raise InvalidRequest("CompleteMultipartUpload body is empty")
-    try:
-        root = ET.fromstring(body)
-    except ET.ParseError as exc:
-        raise InvalidRequest(f"CompleteMultipartUpload body is malformed: {exc}") from exc
+    root = parse_xml_safely(body)
     # Element name may or may not have the S3 namespace.
     parts: list[tuple[int, str]] = []
     for elem in root:
@@ -136,12 +150,16 @@ def _parse_complete_body(body: bytes) -> list[tuple[int, str]]:
         pn_el = next((c for c in elem if c.tag.split("}", 1)[-1] == "PartNumber"), None)
         et_el = next((c for c in elem if c.tag.split("}", 1)[-1] == "ETag"), None)
         if pn_el is None or et_el is None or pn_el.text is None or et_el.text is None:
-            raise InvalidRequest("Part missing PartNumber or ETag")
+            raise MalformedXML("Part missing PartNumber or ETag")
         try:
             pn = int(pn_el.text.strip())
         except ValueError as exc:
-            raise InvalidRequest(f"bad PartNumber: {pn_el.text!r}") from exc
+            raise MalformedXML(f"bad PartNumber: {pn_el.text!r}") from exc
         parts.append((pn, et_el.text.strip()))
+        if len(parts) > MAX_COMPLETE_PARTS:
+            raise MalformedXML(
+                f"CompleteMultipartUpload supports at most {MAX_COMPLETE_PARTS} parts"
+            )
     return parts
 
 

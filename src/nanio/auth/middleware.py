@@ -63,13 +63,12 @@ class SigV4Middleware:
         scope["nanio.principal"] = verified.access_key
 
         if verified.is_streaming:
+            # ASGI guarantees lowercase header names, so we only ever need
+            # the lowercase keys here. (Security audit L1: dead-code
+            # cleanup of an unreachable `Authorization` fallback.)
             headers = {k.decode("latin-1"): v.decode("latin-1") for k, v in scope["headers"]}
-            amz_date = (
-                headers.get("x-amz-date") or headers.get("X-Amz-Date") or headers.get("Date", "")
-            )
-            parts = parse_authorization_header(
-                headers["authorization"] if "authorization" in headers else headers["Authorization"]
-            )
+            amz_date = headers.get("x-amz-date") or headers.get("date", "")
+            parts = parse_authorization_header(headers["authorization"])
             wrapped_receive = _make_chunked_receive(
                 receive,
                 signing_key=verified.signing_key,

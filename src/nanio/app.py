@@ -7,6 +7,7 @@ factory function is what `uvicorn` calls with `factory=True`.
 
 from __future__ import annotations
 
+import logging
 import os
 from pathlib import Path
 
@@ -21,9 +22,11 @@ from nanio.auth.credentials import (
 )
 from nanio.auth.middleware import SigV4Middleware
 from nanio.config import DEFAULT_DATA_DIR, Settings
-from nanio.errors import S3Error
+from nanio.errors import InternalError, S3Error
 from nanio.handlers import build_routes
 from nanio.storage.filesystem import FilesystemStorage
+
+_log = logging.getLogger("nanio.app")
 
 
 def _settings_from_env() -> Settings:
@@ -39,6 +42,24 @@ async def _s3_error_handler(request: Request, exc: Exception) -> Response:
     return Response(
         content=exc.to_xml(),
         status_code=exc.http_status,
+        media_type="application/xml",
+    )
+
+
+async def _unexpected_error_handler(request: Request, exc: Exception) -> Response:
+    """Catch-all for any non-S3Error exception (security audit finding M3).
+
+    Without this, Starlette's default handler returns a plain-text 500
+    that may leak the exception class name and message — breaking the
+    wire contract (clients expect S3 XML errors) and disclosing internal
+    state. We log the full traceback server-side and return a generic
+    `InternalError` XML body.
+    """
+    _log.exception("unhandled exception in request handler", exc_info=exc)
+    err = InternalError()
+    return Response(
+        content=err.to_xml(),
+        status_code=err.http_status,
         media_type="application/xml",
     )
 
@@ -63,7 +84,10 @@ def build_app(settings: Settings | None = None) -> Starlette:
         debug=False,
         routes=build_routes(),
         middleware=middleware,
-        exception_handlers={S3Error: _s3_error_handler},
+        exception_handlers={
+            S3Error: _s3_error_handler,
+            Exception: _unexpected_error_handler,
+        },
     )
     app.state.settings = settings
     app.state.storage = storage
