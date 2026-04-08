@@ -4,7 +4,7 @@ build-backend = "uv_build"
 
 [project]
 name = "nanio"
-version = "0.1.0"
+version = "0.1.1"
 description = "A minimal, stateless, S3-compatible object storage server. Buckets are folders, objects are files."
 readme = "README.md"
 license = "Apache-2.0"
