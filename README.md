@@ -12,7 +12,15 @@ export NANIO_ACCESS_KEY=minioadmin NANIO_SECRET_KEY=minioadmin
 nanio serve --data-dir ./nanio-data
 ```
 
+In another shell, point the AWS CLI at it. The `aws` CLI only reads its
+own `AWS_*` env vars — it doesn't know about `NANIO_*` — so you have to
+export the same credentials under the names the AWS SDK expects:
+
 ```bash
+export AWS_ACCESS_KEY_ID=minioadmin
+export AWS_SECRET_ACCESS_KEY=minioadmin
+export AWS_DEFAULT_REGION=us-east-1
+
 aws --endpoint-url http://localhost:9000 s3 mb s3://test
 aws --endpoint-url http://localhost:9000 s3 cp README.md s3://test/
 aws --endpoint-url http://localhost:9000 s3 ls s3://test/
