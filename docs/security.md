@@ -185,8 +185,29 @@ The default credential resolver reads `NANIO_ACCESS_KEY` and
 dump. Prefer the `--credentials-file` mode (TOML) for production, with
 the file owned by the nanio user and mode `0600`.
 
+### Running the multipart GC on a live server
+
+`nanio serve --gc-abandoned-uploads` deletes multipart upload
+directories older than 7 days at startup. It has two passes: one that
+uses the age recorded in `init.json`, and one that uses the on-disk
+directory mtime (so even corrupt or orphan dirs get reclaimed, security
+audit H2-v2). Before deleting, the GC re-checks the directory mtime
+against a 60 s recency window and backs off if it was touched recently
+— this closes the narrow race where a concurrent `UploadPart` lands
+parts inside a directory the GC was about to remove (security audit
+M1-v2). The remaining window is small enough to ignore in practice, but
+operators who want maximum safety should run the GC on a quiet host
+rather than alongside a busy live server.
+
 ## Reporting a vulnerability
 
 If you find a security issue in nanio, please open a GitHub issue
 labeled `security` at `https://github.com/apocas/nanio/issues`. For
 sensitive findings, contact the maintainer privately first.
+
+## Audit history
+
+| Date | Release | Audit summary |
+|---|---|---|
+| 2026-04-08 | `0.1.2` | First audit: 6 HIGH (H1–H6) + 6 MEDIUM (M1–M6) + 3 LOW (L1–L3). All HIGH and MEDIUM findings remediated except M6 (Range suffix-range parser — wire compat gap, not security). |
+| 2026-04-08 | `0.1.3` | Second audit (post-remediation review). 2 HIGH + 2 MEDIUM + 4 LOW/INFO. Fixes: `synthesize_metadata_from_stat` now uses `lstat` (H1-v2); multipart `create` is now atomic, `list_uploads` is tolerant of corrupt `init.json`, GC has an orphan-dir sweep keyed on directory mtime (H2-v2); GC skips upload dirs touched in the last 60 s (M1-v2); `parse_xml_safely` lets unexpected exceptions propagate to the catch-all handler so they are logged with a full traceback (M2-v2); `read_bounded_body` enforces the cap BEFORE extending the buffer (L1-v2); metadata size accounting uses latin-1 byte length (L2-v2); `defusedxml` now also forbids raw DTDs (L3-v2). |

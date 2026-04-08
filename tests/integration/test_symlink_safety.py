@@ -16,11 +16,15 @@ exercise both layers.
 from __future__ import annotations
 
 import asyncio
+import os
+from datetime import UTC, datetime
 
 import pytest
 
 from nanio.errors import NoSuchBucket, NoSuchKey
 from nanio.storage.filesystem import FilesystemStorage
+from nanio.storage.metadata import synthesize_metadata_from_stat
+from nanio.storage.paths import metadata_path
 
 # These tests use the storage backend directly so we don't need to spin up
 # the whole ASGI app — the threat model is at the filesystem layer.
@@ -90,11 +94,10 @@ def test_put_through_parent_symlink_refused(storage, tmp_path):
 
 def test_put_then_replaced_by_symlink_does_not_redirect_metadata(storage, tmp_path):
     """If an attacker replaces the metadata sidecar with a symlink between
-    PUT and the next read, O_NOFOLLOW must refuse to read it."""
-    # First put an object normally.
+    PUT and the next read, O_NOFOLLOW must refuse to read it and
+    head_object must fall back to synthesized metadata from the real
+    object file."""
     asyncio.run(storage.put_object("widgets", "k.txt", _stream(b"hello")))
-    # Now replace the sidecar with a symlink.
-    from nanio.storage.paths import metadata_path
 
     sidecar = metadata_path(tmp_path, "widgets", "k.txt")
     sidecar.unlink()
@@ -104,11 +107,8 @@ def test_put_then_replaced_by_symlink_does_not_redirect_metadata(storage, tmp_pa
     )
     sidecar.symlink_to(fake_target)
 
-    # head_object should NOT trust the symlinked sidecar — it falls back
-    # to synthesized metadata derived from the real file's stat.
+    # Real file is 5 bytes; the symlinked sidecar falsely claims 99999.
     info = storage.head_object("widgets", "k.txt")
-    # Real file is 5 bytes; the symlinked sidecar claimed 99999. We expect
-    # the real size, proving the symlink was not followed.
     assert info.size == 5
 
 
@@ -158,3 +158,20 @@ def test_symlinked_bucket_root_refused_for_bucket_operations(tmp_path):
 
     with pytest.raises(NoSuchBucket):
         storage.list_objects("escaped-root")
+
+
+def test_synthesize_metadata_does_not_follow_symlink(tmp_path):
+    """`synthesize_metadata_from_stat` must lstat, not stat — otherwise
+    a symlinked path in the fallback leaks the target file's size and
+    mtime through the listing."""
+    canary = tmp_path.parent / "security-canary-h1v2.bin"
+    canary.write_bytes(b"x" * 7777)
+    os.utime(canary, (1, 1))
+
+    sym_path = tmp_path / "widgets-not-a-bucket"
+    sym_path.symlink_to(canary)
+
+    info = synthesize_metadata_from_stat(sym_path, "sym")
+
+    assert info.size != 7777  # lstat of the symlink, not the 7777-byte target
+    assert info.last_modified > datetime(2000, 1, 1, tzinfo=UTC)  # not 1970

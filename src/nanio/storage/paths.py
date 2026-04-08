@@ -14,7 +14,9 @@ single-file change.
 
 from __future__ import annotations
 
+import contextlib
 import os
+from collections.abc import Iterator
 from pathlib import Path
 
 from nanio.keys import safe_join
@@ -22,6 +24,43 @@ from nanio.keys import safe_join
 META_DIR_NAME = ".nanio-meta"
 MULTIPART_ROOT_NAME = ".nanio"
 MULTIPART_SUBDIR = "multipart"
+
+
+@contextlib.contextmanager
+def atomic_write(path: Path, *, text: bool = False) -> Iterator[int]:
+    """Yield an `os.open` fd pointing at a fresh tmp file for `path`.
+
+    On context exit, the tmp file is `fsync`ed and atomically `os.replace`d
+    into `path`. On exception, the tmp file is unlinked and the exception
+    propagates. Used by both the JSON sidecar writer and the multipart
+    `init.json` writer so that neither can leave a partially-written file
+    on disk after a crash.
+
+    Callers that want a text-mode Python file can set `text=True` and
+    wrap the yielded fd with `os.fdopen(fd, "w", encoding="utf-8", closefd=False)`.
+    Otherwise they use the fd directly with `os.write` / `os.fdopen(..., "wb")`.
+
+    The tmp file is created with `O_EXCL | O_NOFOLLOW`, so a pre-existing
+    file or symlink at the tmp path fails the open — our writer always
+    owns the inode it just created.
+    """
+    tmp_path = path.with_suffix(path.suffix + ".tmp")
+    fd = os.open(
+        tmp_path,
+        os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+        0o644,
+    )
+    try:
+        yield fd
+        os.fsync(fd)
+    except BaseException:
+        os.close(fd)
+        with contextlib.suppress(FileNotFoundError):
+            os.unlink(tmp_path)
+        raise
+    else:
+        os.close(fd)
+        os.replace(tmp_path, path)
 
 
 def assert_inside_data_dir(data_dir: Path, target: Path) -> None:

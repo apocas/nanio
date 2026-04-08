@@ -189,3 +189,59 @@ async def test_normal_delete_objects_still_works(asgi_client):
     )
     assert r.status_code == 200
     assert b"<Deleted>" in r.content
+
+
+# ----------------------------------------------------------------------
+# L3-v2: DTDs are forbidden even when they don't contain entities
+# ----------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_raw_dtd_without_entities_is_rejected(asgi_client):
+    """Security audit L3-v2: we pass `forbid_dtd=True` to defusedxml so
+    even a DTD that doesn't declare any entities is refused. S3 clients
+    never send DTDs, and blocking them preemptively narrows the attack
+    surface for any future defusedxml bugs.
+    """
+    body = b"""<?xml version="1.0"?>
+<!DOCTYPE Delete SYSTEM "http://example.com/schema.dtd">
+<Delete><Object><Key>foo</Key></Object></Delete>"""
+    r = await asgi_client.post(
+        "/widgets?delete",
+        content=body,
+        headers={"content-type": "application/xml"},
+    )
+    assert r.status_code == 400
+    root = ET.fromstring(r.content)
+    assert root.find("Code").text == "MalformedXML"
+
+
+# ----------------------------------------------------------------------
+# M2-v2: unexpected parser exceptions propagate to the catch-all handler
+# ----------------------------------------------------------------------
+
+
+def test_parse_xml_safely_lets_unexpected_exceptions_propagate(monkeypatch):
+    """Security audit M2-v2: `parse_xml_safely` must only translate
+    *known* rejection exceptions to `MalformedXML`. Anything else (a
+    real bug, a RecursionError, an OSError from a broken stdlib, etc.)
+    must propagate so the top-level catch-all handler logs the full
+    traceback and returns `InternalError`.
+    """
+    from nanio.errors import MalformedXML
+    from nanio.handlers import _body
+
+    class WeirdBug(RuntimeError):
+        pass
+
+    def boom(*args, **kwargs):
+        raise WeirdBug("simulated bug deep inside the parser")
+
+    monkeypatch.setattr(_body.DefusedET, "fromstring", boom)
+    with pytest.raises(WeirdBug):
+        _body.parse_xml_safely(b"<Delete/>")
+
+    # Undo the monkeypatch: a legitimate parse error still becomes MalformedXML.
+    monkeypatch.undo()
+    with pytest.raises(MalformedXML):
+        _body.parse_xml_safely(b"<<< not valid xml >>>")

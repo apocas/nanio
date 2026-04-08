@@ -23,7 +23,11 @@ from nanio.errors import (
     MalformedXML,
     NoSuchBucket,
 )
-from nanio.handlers._body import parse_xml_safely, read_bounded_body
+from nanio.handlers._body import (
+    extract_user_metadata,
+    parse_xml_safely,
+    read_bounded_body,
+)
 from nanio.storage.multipart import (
     MultipartInit,
     MultipartManager,
@@ -36,38 +40,13 @@ from nanio.xml import (
     list_parts_xml,
 )
 
-USER_META_PREFIX = "x-amz-meta-"
-
 # AWS S3 caps CompleteMultipartUpload at 10 000 parts.
 MAX_COMPLETE_PARTS = 10_000
-
-# AWS S3 caps user metadata at 2 KiB total. Mirror that here so the cap
-# applies to multipart Create the same way it does to plain PUT (security
-# audit finding M5).
-MAX_USER_METADATA_BYTES = 2 * 1024
 
 
 def _manager(request: Request) -> MultipartManager:
     settings = get_settings(request)
     return MultipartManager(settings.data_dir, chunk_size=settings.chunk_size)
-
-
-def _extract_user_metadata(request: Request) -> dict[str, str]:
-    out: dict[str, str] = {}
-    total_bytes = 0
-    for raw_key, value in request.headers.items():
-        lower = raw_key.lower()
-        if not lower.startswith(USER_META_PREFIX):
-            continue
-        out[lower] = value
-        total_bytes += len(lower) + len(value)
-        if total_bytes > MAX_USER_METADATA_BYTES:
-            from nanio.errors import MetadataTooLarge
-
-            raise MetadataTooLarge(
-                f"user metadata exceeds maximum of {MAX_USER_METADATA_BYTES} bytes"
-            )
-    return out
 
 
 # ---------------------------------------------------------------------------
@@ -84,7 +63,7 @@ async def create_multipart_upload(request: Request, bucket: str, key: str) -> Re
         bucket=bucket,
         key=key,
         content_type=request.headers.get("content-type", "application/octet-stream"),
-        user_metadata=_extract_user_metadata(request),
+        user_metadata=extract_user_metadata(request),
         content_encoding=request.headers.get("content-encoding"),
         content_disposition=request.headers.get("content-disposition"),
         cache_control=request.headers.get("cache-control"),

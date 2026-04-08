@@ -21,11 +21,12 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import logging
 import os
 import secrets
 import shutil
 import uuid
-from collections.abc import AsyncIterator, Iterable, Mapping
+from collections.abc import AsyncIterator, Iterable, Iterator, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -39,6 +40,7 @@ from nanio.etag import StreamingMd5, multipart_etag, quote_etag, unquote_etag
 from nanio.storage.backend import ObjectInfo
 from nanio.storage.metadata import write_metadata
 from nanio.storage.paths import (
+    atomic_write,
     metadata_path,
     multipart_dir,
     multipart_init_path,
@@ -47,6 +49,14 @@ from nanio.storage.paths import (
     multipart_root,
     object_path,
 )
+
+_log = logging.getLogger("nanio.storage.multipart")
+
+# If a GC sweep is about to nuke an upload dir but the dir's mtime is
+# newer than this many seconds ago, back off and let the next sweep
+# handle it. Closes the narrow race where `list_uploads` snapshots an
+# old upload and a concurrent UploadPart lands parts inside it.
+GC_RECENT_ACTIVITY_WINDOW_SECONDS = 60
 
 
 @dataclass(slots=True)
@@ -95,15 +105,11 @@ class MultipartManager:
         d = multipart_dir(self._data_dir, upload_id)
         (d / "parts").mkdir(parents=True, exist_ok=False)
         init_path = multipart_init_path(self._data_dir, upload_id)
-        # O_NOFOLLOW + O_EXCL: we just created the parent dir, so the
-        # init.json must be a fresh inode we own.
-        fd = os.open(
-            init_path,
-            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
-            0o644,
-        )
-        with os.fdopen(fd, "w", encoding="utf-8", closefd=True) as f:
-            json.dump(_init_to_dict(init), f)
+        # Atomic write so a crash mid-create can never leave a corrupt
+        # init.json on disk (which would DoS list_uploads + the GC).
+        payload = json.dumps(_init_to_dict(init)).encode("utf-8")
+        with atomic_write(init_path) as fd:
+            os.write(fd, payload)
         return upload_id
 
     def abort(self, upload_id: str) -> None:
@@ -121,8 +127,14 @@ class MultipartManager:
             fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
         except OSError as exc:
             raise NoSuchUpload(resource=upload_id) from exc
-        with os.fdopen(fd, encoding="utf-8", closefd=True) as f:
-            return _dict_to_init(json.load(f))
+        try:
+            with os.fdopen(fd, encoding="utf-8", closefd=True) as f:
+                return _dict_to_init(json.load(f))
+        except (json.JSONDecodeError, KeyError, ValueError) as exc:
+            # Corrupt init.json — partial write from a crashed create,
+            # tampered file, etc. Translate to NoSuchUpload so callers
+            # (including list_uploads) can handle this uniformly.
+            raise NoSuchUpload(resource=upload_id) from exc
 
     # ------------------------------------------------------------------
     # Upload part (streaming)
@@ -206,29 +218,52 @@ class MultipartManager:
             )
         return out
 
-    def list_uploads(self) -> list[tuple[str, MultipartInit]]:
+    def _iter_upload_dirs(self) -> Iterator[tuple[str, MultipartInit | None, os.stat_result]]:
+        """Yield `(upload_id, init, stat)` for every upload dir in the root.
+
+        `init` is the parsed `MultipartInit` when `init.json` is readable,
+        else `None` for orphans (missing, corrupt, symlinked, or whatever
+        else `load_init` rejected). `stat` is the directory's own lstat
+        so callers can use `st_mtime` without a second syscall. Symlinked
+        entries are skipped entirely.
+
+        This is the single scandir pass that feeds `list_uploads`,
+        `warn_about_abandoned_uploads`, and `gc_abandoned_uploads`.
+        """
         root = multipart_root(self._data_dir)
         if not root.is_dir():
-            return []
-        out: list[tuple[str, MultipartInit]] = []
+            return
         for entry in os.scandir(root):
-            if not entry.is_dir():
+            if not entry.is_dir(follow_symlinks=False):
                 continue
             try:
-                init = self.load_init(entry.name)
-            except NoSuchUpload:
+                st = entry.stat(follow_symlinks=False)
+            except OSError:
                 continue
-            out.append((entry.name, init))
-        return out
+            try:
+                init: MultipartInit | None = self.load_init(entry.name)
+            except NoSuchUpload:
+                init = None
+            except (OSError, ValueError, KeyError) as exc:
+                _log.warning(
+                    "multipart upload %s: init unreadable (%s); treating as orphan",
+                    entry.name,
+                    exc,
+                )
+                init = None
+            yield entry.name, init, st
+
+    def list_uploads(self) -> list[tuple[str, MultipartInit]]:
+        return [
+            (upload_id, init)
+            for upload_id, init, _st in self._iter_upload_dirs()
+            if init is not None
+        ]
 
     def warn_about_abandoned_uploads(
         self, *, max_age_seconds: int = 7 * 24 * 3600
     ) -> list[tuple[str, datetime]]:
-        """Return (upload_id, initiated) for uploads older than `max_age_seconds`.
-
-        Caller logs the warnings — we keep this pure so unit tests can
-        assert on the result.
-        """
+        """Return (upload_id, initiated) for uploads older than `max_age_seconds`."""
         now = datetime.now(tz=UTC)
         old: list[tuple[str, datetime]] = []
         for upload_id, init in self.list_uploads():
@@ -240,28 +275,43 @@ class MultipartManager:
     def gc_abandoned_uploads(self, *, max_age_seconds: int = 7 * 24 * 3600) -> list[str]:
         """Delete every multipart upload directory older than `max_age_seconds`.
 
-        Returns the list of upload_ids that were deleted. Used to address
-        security audit finding M4: without this, an attacker can create
-        multipart uploads forever and burn an inode + ~1 KB per upload
-        with no way to reclaim them. Called once at startup from `cli.py`
-        and on demand via `nanio serve --gc-abandoned-uploads`.
+        For each upload dir, age is derived from `init.initiated` when
+        the upload's `init.json` parses, and from the directory's own
+        mtime otherwise (so corrupt-init.json orphans can't accumulate
+        indefinitely). Before deleting, we re-check the directory mtime
+        against a 60 s recency window and back off if the dir was
+        touched recently — that closes the narrow race where a fresh
+        `UploadPart` lands inside an old dir the GC was about to remove.
 
-        Errors during individual deletes are logged but do not abort the
-        sweep — best-effort cleanup.
+        Returns the list of upload_ids that were deleted. Called at
+        startup from `cli.py --gc-abandoned-uploads`.
         """
-        now = datetime.now(tz=UTC)
+        now_ts = datetime.now(tz=UTC).timestamp()
         deleted: list[str] = []
-        for upload_id, init in self.list_uploads():
-            age = (now - init.initiated).total_seconds()
+        for upload_id, init, st in self._iter_upload_dirs():
+            age = now_ts - init.initiated.timestamp() if init is not None else now_ts - st.st_mtime
             if age <= max_age_seconds:
                 continue
-            try:
-                d = multipart_dir(self._data_dir, upload_id)
-                shutil.rmtree(d, ignore_errors=False)
+            if self._gc_rmtree(upload_id, dir_mtime=st.st_mtime, now_ts=now_ts):
                 deleted.append(upload_id)
-            except OSError:
-                continue
         return deleted
+
+    def _gc_rmtree(self, upload_id: str, *, dir_mtime: float, now_ts: float) -> bool:
+        """Delete an upload dir, but skip it if it was touched recently.
+
+        Returns True on successful delete, False if we backed off. Errors
+        are logged but do not propagate — the caller keeps sweeping.
+        """
+        if now_ts - dir_mtime < GC_RECENT_ACTIVITY_WINDOW_SECONDS:
+            _log.info("gc: upload %s touched within recency window; skipping", upload_id)
+            return False
+        d = multipart_dir(self._data_dir, upload_id)
+        try:
+            shutil.rmtree(d, ignore_errors=False)
+        except OSError as exc:
+            _log.warning("gc: failed to rmtree upload %s (%s)", upload_id, exc)
+            return False
+        return True
 
     # ------------------------------------------------------------------
     # Complete

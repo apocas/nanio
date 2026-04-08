@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
+import os
 from collections.abc import AsyncIterator
-from datetime import UTC
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -19,8 +21,10 @@ from nanio.storage.filesystem import FilesystemStorage
 from nanio.storage.multipart import (
     MultipartInit,
     MultipartManager,
+    _init_to_dict,
     new_upload_id,
 )
+from nanio.storage.paths import multipart_dir, multipart_init_path
 
 
 @pytest.fixture
@@ -171,20 +175,19 @@ def test_list_uploads(manager):
 
 
 def _make_ancient_upload(manager, key: str = "k", days_old: int = 30) -> str:
-    """Create a multipart upload then back-date its init.json."""
+    """Create a multipart upload then back-date its init.json AND its
+    directory mtime so the GC recency gate doesn't skip it."""
     upload_id = manager.create(MultipartInit(bucket="widgets", key=key))
     init = manager.load_init(upload_id)
-    from datetime import datetime, timedelta
-
     init.initiated = datetime.now(tz=UTC) - timedelta(days=days_old)
-    import json
-
-    from nanio.storage.multipart import _init_to_dict
-    from nanio.storage.paths import multipart_init_path
 
     p = multipart_init_path(manager._data_dir, upload_id)
     with open(p, "w") as f:
         json.dump(_init_to_dict(init), f)
+
+    d = multipart_dir(manager._data_dir, upload_id)
+    ancient_ts = (datetime.now(tz=UTC) - timedelta(days=days_old)).timestamp()
+    os.utime(d, (ancient_ts, ancient_ts))
     return upload_id
 
 
@@ -215,6 +218,87 @@ def test_gc_abandoned_uploads_empty_when_none_old(manager):
     manager.create(MultipartInit(bucket="widgets", key="k"))
     deleted = manager.gc_abandoned_uploads(max_age_seconds=7 * 24 * 3600)
     assert deleted == []
+
+
+def test_list_uploads_skips_corrupt_init_json(manager):
+    """A single corrupt init.json must not crash list_uploads — before
+    the fix, a propagated JSONDecodeError took down ListMultipartUploads,
+    the GC, and the startup warning sweep."""
+    good_id = manager.create(MultipartInit(bucket="widgets", key="good"))
+    bad_id = manager.create(MultipartInit(bucket="widgets", key="bad"))
+    multipart_init_path(manager._data_dir, bad_id).write_text("{ this is not json ]")
+
+    ids = {uid for uid, _ in manager.list_uploads()}
+    assert good_id in ids
+    assert bad_id not in ids
+
+
+def test_list_uploads_skips_init_json_missing_required_fields(manager):
+    good_id = manager.create(MultipartInit(bucket="widgets", key="good"))
+    bad_id = manager.create(MultipartInit(bucket="widgets", key="bad"))
+    multipart_init_path(manager._data_dir, bad_id).write_text('{"unexpected": "field"}')
+
+    ids = {uid for uid, _ in manager.list_uploads()}
+    assert good_id in ids
+    assert bad_id not in ids
+
+
+def test_gc_orphan_sweep_deletes_corrupt_upload_dirs(manager):
+    """The GC's orphan path must delete upload dirs whose init.json is
+    corrupt and whose dir mtime is past the cutoff, so corrupt state
+    can never accumulate indefinitely."""
+    bad_id = manager.create(MultipartInit(bucket="widgets", key="bad"))
+    multipart_init_path(manager._data_dir, bad_id).write_text("{ corrupt")
+
+    d = multipart_dir(manager._data_dir, bad_id)
+    ancient_ts = (datetime.now(tz=UTC) - timedelta(days=30)).timestamp()
+    os.utime(d, (ancient_ts, ancient_ts))
+
+    deleted = manager.gc_abandoned_uploads(max_age_seconds=7 * 24 * 3600)
+    assert bad_id in deleted
+    assert not d.exists()
+
+
+def test_gc_orphan_sweep_spares_recent_corrupt_dir(manager):
+    """A recently-created upload with a corrupt init.json must NOT be
+    deleted — the recency gate keeps it alive until the next sweep."""
+    bad_id = manager.create(MultipartInit(bucket="widgets", key="bad"))
+    multipart_init_path(manager._data_dir, bad_id).write_text("{ corrupt")
+
+    deleted = manager.gc_abandoned_uploads(max_age_seconds=7 * 24 * 3600)
+    assert bad_id not in deleted
+    assert multipart_dir(manager._data_dir, bad_id).exists()
+
+
+def test_create_init_json_is_atomic(manager):
+    """A successful create must leave a complete, parseable init.json
+    and no leftover `.tmp` file — the contract of the atomic_write helper.
+    """
+    upload_id = manager.create(MultipartInit(bucket="widgets", key="k"))
+    p = multipart_init_path(manager._data_dir, upload_id)
+    with p.open(encoding="utf-8") as f:
+        data = json.load(f)
+    assert data["bucket"] == "widgets"
+    assert data["key"] == "k"
+    assert not p.with_suffix(p.suffix + ".tmp").exists()
+
+
+def test_simulated_crash_mid_create_does_not_break_startup(manager):
+    """If a crash leaves an upload dir with no init.json, the next
+    startup's list_uploads must not raise and the GC orphan sweep
+    must eventually reclaim the dir."""
+    upload_id = manager.create(MultipartInit(bucket="widgets", key="k"))
+    multipart_init_path(manager._data_dir, upload_id).unlink()
+
+    assert all(uid != upload_id for uid, _ in manager.list_uploads())
+
+    d = multipart_dir(manager._data_dir, upload_id)
+    ancient_ts = (datetime.now(tz=UTC) - timedelta(days=30)).timestamp()
+    os.utime(d, (ancient_ts, ancient_ts))
+
+    deleted = manager.gc_abandoned_uploads(max_age_seconds=7 * 24 * 3600)
+    assert upload_id in deleted
+    assert not d.exists()
 
 
 def test_concurrent_part_uploads(manager):

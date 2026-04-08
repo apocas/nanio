@@ -7,13 +7,13 @@ leaves a partially-written sidecar.
 
 from __future__ import annotations
 
-import contextlib
 import json
 import os
 from datetime import UTC, datetime
 from pathlib import Path
 
 from nanio.storage.backend import ObjectInfo
+from nanio.storage.paths import atomic_write
 
 
 def _to_dict(info: ObjectInfo) -> dict:
@@ -48,24 +48,14 @@ def _from_dict(key: str, d: dict) -> ObjectInfo:
 def write_metadata(path: Path, info: ObjectInfo) -> None:
     """Atomically write the sidecar JSON file at `path`.
 
-    Uses O_NOFOLLOW so a pre-existing symlink at the sidecar path is not
-    silently followed (security audit finding H5). Combined with O_EXCL
-    on the temp file, the writer always owns the inode it just created.
+    Goes through the shared `atomic_write` helper so the write can never
+    leave a partial file on disk after a crash, and so O_NOFOLLOW refuses
+    to follow any pre-existing symlink at the sidecar path.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = json.dumps(_to_dict(info), separators=(",", ":")).encode("utf-8")
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o644)
-    try:
-        with os.fdopen(fd, "wb", closefd=True) as f:
-            f.write(payload)
-            f.flush()
-            os.fsync(f.fileno())
-    except BaseException:
-        with contextlib.suppress(FileNotFoundError):
-            os.unlink(tmp)
-        raise
-    os.replace(tmp, path)
+    with atomic_write(path) as fd:
+        os.write(fd, payload)
 
 
 def read_metadata(path: Path, key: str) -> ObjectInfo:
@@ -85,8 +75,14 @@ def synthesize_metadata_from_stat(path: Path, key: str) -> ObjectInfo:
 
     Used as a safety net so that data files placed by hand still appear in
     listings, with sensible defaults for content type and ETag.
+
+    Uses ``lstat`` (``follow_symlinks=False``) so that if ``path`` is a
+    symlink, we report the symlink's own metadata rather than the target's.
+    Without this, a corrupt or symlinked sidecar could force the listing
+    path into this fallback and leak the size and mtime of a file outside
+    the bucket.
     """
-    st = path.stat()
+    st = path.stat(follow_symlinks=False)
     last_mod = datetime.fromtimestamp(st.st_mtime, tz=UTC)
     return ObjectInfo(
         key=key,
