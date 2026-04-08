@@ -181,9 +181,15 @@ The repo ships a `.pre-commit-config.yaml` that runs ruff (lint + format) and
 basic file hygiene checks before each commit. **Install once after cloning:**
 
 ```bash
-uv sync --extra dev
-uv run pre-commit install
+uv sync                       # installs dev tools (pytest, ruff, pre-commit, ...)
+uv run pre-commit install     # wires the git hook
 ```
+
+Dev tools live under `[dependency-groups] dev` (PEP 735), so a plain
+`uv sync` always gives you a complete dev environment. Don't move them
+back into `[project.optional-dependencies]` — `pip install nanio[dev]`
+isn't the install path we care about, and the optional-extras path
+silently breaks the pre-commit hook on a plain `uv sync`.
 
 After that, every `git commit` will run the hooks. If a hook auto-fixes
 something, the commit aborts — re-stage the fixes and commit again. Run

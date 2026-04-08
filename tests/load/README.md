@@ -8,7 +8,7 @@ running nanio process. They are excluded from the default `pytest` run via
 
 ```bash
 # 1. Install the loadtest extra (one-time)
-uv sync --extra dev --extra loadtest
+uv sync --extra loadtest
 
 # 2. Start nanio in another terminal
 NANIO_ACCESS_KEY=test NANIO_SECRET_KEY=test \

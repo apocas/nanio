@@ -29,7 +29,7 @@ jobs:
           enable-cache: true
 
       - name: Sync dev deps
-        run: uv sync --frozen --extra dev
+        run: uv sync --frozen
 
       - name: Run tests
         run: uv run pytest

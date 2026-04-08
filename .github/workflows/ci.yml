@@ -30,7 +30,7 @@ jobs:
           enable-cache: true
 
       - name: Sync dev deps
-        run: uv sync --frozen --extra dev
+        run: uv sync --frozen
 
       - name: Lint (ruff)
         run: uv run ruff check src tests
@@ -57,7 +57,7 @@ jobs:
           enable-cache: true
 
       - name: Sync dev deps
-        run: uv sync --frozen --extra dev
+        run: uv sync --frozen
 
       - name: Run streaming memory test (256 MB)
         env:
