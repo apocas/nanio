@@ -523,15 +523,15 @@ def test_buffered_read_exact_raises_on_enter_after_eof():
     Requires `_eof` to be True on loop entry — only reachable after a
     previous read has already observed EOF.
     """
+    import contextlib
+
     buf = _Buffered(_make_source(b""))  # empty source
 
     async def go():
         # First call: loop enters, _eof False, pull() sees b"" and sets
-        # _eof, then the second `if _eof` raises (line 78). Catch it.
-        try:
+        # _eof, then the second `if _eof` raises (line 78). Suppress it.
+        with contextlib.suppress(InvalidRequest):
             await buf.read_exact(1)
-        except InvalidRequest:
-            pass
         # Second call: buf still empty, _eof already True → the FIRST
         # `if _eof` raises (line 75).
         with pytest.raises(InvalidRequest):
