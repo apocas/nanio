@@ -1,5 +1,12 @@
 # nanio
 
+[![CI](https://github.com/apocas/nanio/actions/workflows/ci.yml/badge.svg)](https://github.com/apocas/nanio/actions/workflows/ci.yml)
+[![PyPI version](https://img.shields.io/pypi/v/nanio.svg)](https://pypi.org/project/nanio/)
+[![Python versions](https://img.shields.io/pypi/pyversions/nanio.svg)](https://pypi.org/project/nanio/)
+[![License: Apache 2.0](https://img.shields.io/badge/license-Apache_2.0-blue.svg)](LICENSE)
+[![Coverage: 100%](https://img.shields.io/badge/coverage-100%25-brightgreen.svg)](https://github.com/apocas/nanio/actions/workflows/ci.yml)
+[![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
+
 **A minimal, stateless, S3-compatible object storage server.**
 
 Buckets are folders, objects are files, the entire backing store is a flat
