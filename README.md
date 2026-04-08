@@ -211,12 +211,6 @@ entries with htree, but performance degrades past a few million entries
 in one directory. The standard fix is the same as on AWS S3: use
 prefixed keys (`logs/2026/04/08/...` instead of one flat directory).
 
-## Status
-
-`0.1.0` — alpha. The wire surface is intended to remain stable, but the
-admin/CLI surface may change before a `1.0`. Contributions and bug
-reports welcome.
-
 ## License
 
 Apache 2.0. See `LICENSE`.
