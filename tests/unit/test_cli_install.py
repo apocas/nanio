@@ -231,11 +231,60 @@ def test_install_two_calls_generate_distinct_keys(tmp_path):
     assert r1.secret_key != r2.secret_key
 
 
-def test_install_records_next_steps(tmp_path):
+def test_install_ran_steps_is_list(tmp_path):
+    """ran_steps is populated by the post-install system commands. In a
+    test environment most of these skip (no useradd/systemctl on PATH),
+    so we just check the field type."""
     result = install(prefix=tmp_path, bin_path=Path("/opt/nanio"))
-    assert any("systemctl daemon-reload" in step for step in result.next_steps)
-    assert any("systemctl enable" in step for step in result.next_steps)
-    assert any("useradd" in step for step in result.next_steps)
+    assert isinstance(result.ran_steps, list)
+
+
+def test_run_step_records_success(tmp_path):
+    """_run_step adds the command to `ran` on success."""
+    from nanio.install import _run_step
+
+    ran: list[str] = []
+    _run_step(ran, ["true"])  # `true` is a coreutils binary that always exits 0
+    assert len(ran) == 1
+    assert "true" in ran[0]
+
+
+def test_run_step_skips_missing_binary(tmp_path):
+    """If the binary is not on PATH, _run_step silently skips."""
+    from nanio.install import _run_step
+
+    ran: list[str] = []
+    _run_step(ran, ["nonexistent-binary-xyz-12345"])
+    assert ran == []
+
+
+def test_run_step_logs_failure_without_raising(tmp_path):
+    """A command that fails is logged but doesn't raise or add to `ran`."""
+    from nanio.install import _run_step
+
+    ran: list[str] = []
+    _run_step(ran, ["false"])  # `false` always exits 1
+    assert ran == []
+
+
+def test_run_step_handles_useradd_exit_9():
+    """useradd returns 9 when the user already exists — treat as success."""
+    import subprocess
+    from unittest.mock import patch as _patch
+
+    from nanio.install import _run_step
+
+    def fake_run(cmd, **kwargs):
+        raise subprocess.CalledProcessError(9, cmd, stderr="user exists")
+
+    ran: list[str] = []
+    with (
+        _patch("subprocess.run", fake_run),
+        _patch("shutil.which", return_value="/usr/sbin/useradd"),
+    ):
+        _run_step(ran, ["useradd", "--system", "nanio"])
+    assert len(ran) == 1
+    assert "already exists" in ran[0]
 
 
 def test_install_custom_user_propagates_to_unit(tmp_path):
@@ -305,8 +354,6 @@ def test_cli_install_happy_path(tmp_path, capsys):
     assert "nanio installed." in out
     assert "access_key = " in out
     assert "secret_key = " in out
-    assert "systemctl daemon-reload" in out
-    assert "systemctl enable" in out
     assert "http://0.0.0.0:9000" in out
     # Files exist on disk.
     assert (tmp_path / "etc/nanio/options.toml").is_file()
@@ -348,6 +395,30 @@ def test_cli_install_warns_when_bin_path_was_guessed(tmp_path, capsys, monkeypat
     out = capsys.readouterr().out
     assert "WARNING" in out
     assert "/usr/local/bin/nanio" in out
+
+
+def test_cli_install_prints_ran_steps(tmp_path, capsys):
+    """When ran_steps is non-empty, the summary shows them."""
+    from nanio.cli import _print_install_summary
+    from nanio.install import InstallResult
+
+    result = InstallResult(
+        access_key="ak",
+        secret_key="sk",
+        options_path=tmp_path / "options.toml",
+        systemd_unit_path=tmp_path / "nanio.service",
+        data_dir=tmp_path / "data",
+        bin_path=Path("/opt/nanio"),
+        user="nanio",
+        host="0.0.0.0",
+        port=9000,
+        ran_steps=["useradd ...", "systemctl daemon-reload"],
+    )
+    _print_install_summary(result)
+    out = capsys.readouterr().out
+    assert "Post-install steps completed:" in out
+    assert "useradd" in out
+    assert "systemctl daemon-reload" in out
 
 
 def test_cli_install_subcommand_help(capsys):

@@ -23,14 +23,18 @@ install with `rm -rf` of the listed paths.
 
 from __future__ import annotations
 
+import logging
 import os
 import secrets
 import shutil
+import subprocess
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from nanio.options import DEFAULT_OPTIONS_PATH
+
+_log = logging.getLogger("nanio.install")
 
 DEFAULT_SYSTEMD_UNIT_PATH = Path("/etc/systemd/system/nanio.service")
 DEFAULT_DATA_DIR = Path("/var/lib/nanio")
@@ -67,7 +71,7 @@ class InstallResult:
     host: str
     port: int
     bin_was_guessed: bool = False
-    next_steps: list[str] = field(default_factory=list)
+    ran_steps: list[str] = field(default_factory=list)
 
 
 def generate_credentials() -> tuple[str, str]:
@@ -256,12 +260,16 @@ def install(
 
     data_dir_resolved.mkdir(parents=True, exist_ok=True)
 
-    next_steps = [
-        f"sudo useradd --system --no-create-home --shell /usr/sbin/nologin {user}",
-        f"sudo chown -R {user}:{user} {data_dir}",
-        "sudo systemctl daemon-reload",
-        "sudo systemctl enable --now nanio",
-    ]
+    # Run the post-install steps that require system tools. Each one is
+    # best-effort — failures are logged but don't abort the install.
+    ran_steps: list[str] = []
+    _run_step(
+        ran_steps, ["useradd", "--system", "--no-create-home", "--shell", "/usr/sbin/nologin", user]
+    )
+    _run_step(ran_steps, ["chown", "-R", f"{user}:{user}", str(data_dir_resolved)])
+    _run_step(ran_steps, ["chown", "-R", f"{user}:{user}", str(options_path.parent)])
+    _run_step(ran_steps, ["systemctl", "daemon-reload"])
+    _run_step(ran_steps, ["systemctl", "enable", "--now", "nanio"])
 
     return InstallResult(
         access_key=access_key,
@@ -274,8 +282,36 @@ def install(
         host=host,
         port=port,
         bin_was_guessed=bin_was_guessed,
-        next_steps=next_steps,
+        ran_steps=ran_steps,
     )
+
+
+def _run_step(ran: list[str], cmd: list[str]) -> None:
+    """Run a system command, appending a description to `ran` on success.
+
+    Failures are logged at WARNING but do not raise — `nanio install`
+    is best-effort for post-install steps so operators on systems
+    without systemd (containers, chroot, CI) still get the written files.
+    """
+    label = " ".join(cmd)
+    binary = shutil.which(cmd[0])
+    if binary is None:
+        _log.info("skipping (not found on PATH): %s", label)
+        return
+    try:
+        subprocess.run(
+            [binary, *cmd[1:]],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        ran.append(label)
+    except subprocess.CalledProcessError as exc:
+        # useradd exits 9 if the user already exists — not an error.
+        if cmd[0] == "useradd" and exc.returncode == 9:
+            ran.append(f"{label} (user already exists)")
+            return
+        _log.warning("%s failed (exit %d): %s", label, exc.returncode, exc.stderr.strip())
 
 
 def _strip_leading_slash(p: Path) -> Path:

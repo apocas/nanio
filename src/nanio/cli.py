@@ -380,10 +380,11 @@ def _print_install_summary(result: _install.InstallResult) -> None:
             f"ExecStart points at {result.bin_path}. Edit the unit file or\n"
             "re-run `nanio install --bin <path> --force` before starting the service."
         )
-    print()
-    print("Next steps:")
-    for step in result.next_steps:
-        print(f"  {step}")
+    if result.ran_steps:
+        print()
+        print("Post-install steps completed:")
+        for step in result.ran_steps:
+            print(f"  {step}")
     print()
     print(f"nanio will listen on http://{result.host}:{result.port}")
 

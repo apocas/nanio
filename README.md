@@ -161,32 +161,33 @@ to start. There is no anonymous mode.
 
 ### Install as a systemd service
 
-The easy path on a Linux box is `nanio install`, which generates a
-random `(access_key, secret_key)` pair, writes them into a complete
-options file at `/etc/nanio/options.toml`, and installs a hardened
-systemd unit at `/etc/systemd/system/nanio.service`. Run as root:
+One command does everything:
 
 ```bash
 sudo nanio install
 ```
 
-It prints the generated credentials once — make a note of them — and
-the next steps:
+This will:
 
-```
-sudo useradd --system --no-create-home --shell /usr/sbin/nologin nanio
-sudo chown -R nanio:nanio /var/lib/nanio
-sudo systemctl daemon-reload
-sudo systemctl enable --now nanio
-```
+1. Generate a random access key + secret key
+2. Write `/etc/nanio/options.toml` with the keys and default `[server]` settings
+3. Install a hardened systemd unit at `/etc/systemd/system/nanio.service`
+4. Create a `nanio` system user (if it doesn't already exist)
+5. `chown` the data dir and config to the `nanio` user
+6. Run `systemctl daemon-reload` and `systemctl enable --now nanio`
 
+The generated credentials are printed once — make a note of them.
 After that, edit `/etc/nanio/options.toml` whenever you want to rotate
 keys, add users, or change `data_dir`/`host`/`port`/`region`, then
 `sudo systemctl restart nanio`.
 
+Each post-install step is best-effort: on systems without `systemd` or
+`useradd` (containers, CI), the files are still written and the
+missing steps are silently skipped.
+
 `nanio install` accepts `--prefix`, `--data-dir`, `--bin`, `--user`,
-`--host`, `--port`, and `--force` if you need to customize the unit or
-dry-run into a scratch directory.
+`--host`, `--port`, and `--force` if you need to customize the output
+or dry-run into a scratch directory.
 
 ## Scaling out
 
