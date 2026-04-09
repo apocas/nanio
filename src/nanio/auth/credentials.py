@@ -64,7 +64,7 @@ class EnvCredentialResolver(StaticCredentialResolver):
         if not access or not secret:
             raise ValueError(
                 "NANIO_ACCESS_KEY and NANIO_SECRET_KEY must both be set "
-                "in the environment, or provide a --credentials-file."
+                "in the environment, or provide --options /path/to/options.toml."
             )
         super().__init__({access: secret})
 

@@ -88,55 +88,170 @@ def test_cmd_serve_missing_credentials_returns_error(tmp_path, clean_env, capsys
 
 
 # ----------------------------------------------------------------------
-# Credentials-file path
+# Options-file path
 # ----------------------------------------------------------------------
 
 
-def test_cmd_serve_with_credentials_file(tmp_path, clean_env):
-    cred_file = tmp_path / "creds.toml"
-    cred_file.write_text('[[users]]\naccess_key = "alice"\nsecret_key = "wonderland"\n')
+def test_cmd_serve_with_options_file(tmp_path, clean_env):
+    options_file = tmp_path / "options.toml"
+    options_file.write_text(
+        """
+[server]
+data_dir = "{data_dir}"
+host = "127.0.0.1"
+port = 9001
+region = "eu-west-1"
+workers = 2
 
-    args = _serve_args(
-        data_dir=tmp_path / "data",
-        credentials_file=cred_file,
+[[users]]
+access_key = "alice"
+secret_key = "wonderland"
+""".format(data_dir=tmp_path / "data")
     )
+
+    args = _serve_args(options=options_file)
 
     with patch("uvicorn.run") as mock_run:
         rc = _cmd_serve(args)
 
     assert rc == 0
     assert mock_run.called
-    assert os.environ["NANIO_CREDENTIALS_FILE"] == str(cred_file)
+    assert os.environ["NANIO_OPTIONS_FILE"] == str(options_file)
+    assert os.environ["NANIO_REGION"] == "eu-west-1"
+    # Resolved values were passed to uvicorn.run.
+    kwargs = mock_run.call_args.kwargs
+    assert kwargs["host"] == "127.0.0.1"
+    assert kwargs["port"] == 9001
+    assert kwargs["workers"] == 2
 
 
-def test_cmd_serve_with_missing_credentials_file(tmp_path, clean_env, capsys):
-    args = _serve_args(
-        data_dir=tmp_path / "data",
-        credentials_file=tmp_path / "does-not-exist.toml",
+def test_cmd_serve_options_file_via_env_var(tmp_path, clean_env):
+    """`NANIO_OPTIONS_FILE` env var is honored when --options is omitted."""
+    options_file = tmp_path / "options.toml"
+    options_file.write_text(
+        '[server]\ndata_dir = "{}"\n[[users]]\naccess_key = "ak"\nsecret_key = "sk"\n'.format(
+            tmp_path / "data"
+        )
     )
-
+    os.environ["NANIO_OPTIONS_FILE"] = str(options_file)
+    args = _serve_args()
     with patch("uvicorn.run") as mock_run:
         rc = _cmd_serve(args)
-
-    assert rc == 2
-    assert not mock_run.called
-    assert "failed to load credentials file" in capsys.readouterr().err
+    assert rc == 0
+    assert mock_run.called
 
 
-def test_cmd_serve_with_malformed_credentials_file(tmp_path, clean_env, capsys):
-    cred_file = tmp_path / "creds.toml"
-    cred_file.write_text("not valid toml [[[[[")
-
-    args = _serve_args(
-        data_dir=tmp_path / "data",
-        credentials_file=cred_file,
-    )
-
+def test_cmd_serve_with_missing_options_file(tmp_path, clean_env, capsys):
+    args = _serve_args(options=tmp_path / "does-not-exist.toml")
     with patch("uvicorn.run") as mock_run:
         rc = _cmd_serve(args)
-
     assert rc == 2
     assert not mock_run.called
+    assert "failed to load options file" in capsys.readouterr().err
+
+
+def test_cmd_serve_with_malformed_options_file(tmp_path, clean_env, capsys):
+    options_file = tmp_path / "options.toml"
+    options_file.write_text("not valid toml [[[[[")
+    args = _serve_args(options=options_file)
+    with patch("uvicorn.run") as mock_run:
+        rc = _cmd_serve(args)
+    assert rc == 2
+    assert not mock_run.called
+
+
+def test_cmd_serve_with_options_file_missing_users(tmp_path, clean_env, capsys):
+    """Options file with [server] but no [[users]] → credentials load fails."""
+    options_file = tmp_path / "options.toml"
+    options_file.write_text('[server]\ndata_dir = "{}"\n'.format(tmp_path / "data"))
+    args = _serve_args(options=options_file)
+    with patch("uvicorn.run") as mock_run:
+        rc = _cmd_serve(args)
+    assert rc == 2
+    assert not mock_run.called
+    assert "failed to load credentials" in capsys.readouterr().err
+
+
+# ----------------------------------------------------------------------
+# Precedence: CLI flag > env > options file > default
+# ----------------------------------------------------------------------
+
+
+def test_cmd_serve_cli_flag_overrides_options_file(tmp_path, clean_env):
+    """When --port is given on the CLI, it wins over the options file."""
+    options_file = tmp_path / "options.toml"
+    options_file.write_text(
+        '[server]\nport = 1111\n[[users]]\naccess_key = "ak"\nsecret_key = "sk"\n'
+    )
+    args = _serve_args(options=options_file, port=2222, data_dir=tmp_path / "data")
+    with patch("uvicorn.run") as mock_run:
+        _cmd_serve(args)
+    assert mock_run.call_args.kwargs["port"] == 2222
+
+
+def test_cmd_serve_env_var_overrides_options_file(tmp_path, clean_env):
+    """NANIO_PORT in env beats the options file."""
+    options_file = tmp_path / "options.toml"
+    options_file.write_text(
+        '[server]\nport = 1111\n[[users]]\naccess_key = "ak"\nsecret_key = "sk"\n'
+    )
+    os.environ["NANIO_PORT"] = "3333"
+    args = _serve_args(options=options_file, data_dir=tmp_path / "data")
+    with patch("uvicorn.run") as mock_run:
+        _cmd_serve(args)
+    assert mock_run.call_args.kwargs["port"] == 3333
+
+
+def test_cmd_serve_cli_flag_beats_env_var(tmp_path, clean_env):
+    """CLI flag wins even when both are set."""
+    os.environ["NANIO_ACCESS_KEY"] = "ak"
+    os.environ["NANIO_SECRET_KEY"] = "sk"
+    os.environ["NANIO_PORT"] = "3333"
+    args = _serve_args(data_dir=tmp_path / "data", port=4444)
+    with patch("uvicorn.run") as mock_run:
+        _cmd_serve(args)
+    assert mock_run.call_args.kwargs["port"] == 4444
+
+
+def test_cmd_serve_data_dir_from_env_var(tmp_path, clean_env):
+    """`NANIO_DATA_DIR` env var sets the data dir when no CLI flag is given."""
+    os.environ["NANIO_ACCESS_KEY"] = "ak"
+    os.environ["NANIO_SECRET_KEY"] = "sk"
+    target = tmp_path / "from-env"
+    os.environ["NANIO_DATA_DIR"] = str(target)
+    args = _serve_args()
+    with patch("uvicorn.run"):
+        _cmd_serve(args)
+    assert os.environ["NANIO_DATA_DIR"] == str(target.resolve())
+
+
+def test_cmd_serve_data_dir_falls_back_to_default(clean_env, tmp_path, monkeypatch):
+    """With no CLI flag, no env var, and no options file, the default
+    data dir is used. Run from tmp_path so the relative ./nanio-data
+    doesn't pollute the repo."""
+    monkeypatch.chdir(tmp_path)
+    os.environ["NANIO_ACCESS_KEY"] = "ak"
+    os.environ["NANIO_SECRET_KEY"] = "sk"
+    args = _serve_args()
+    with patch("uvicorn.run"):
+        _cmd_serve(args)
+    # The default is `./nanio-data` (resolved). Verify it landed in env.
+    from nanio.config import DEFAULT_DATA_DIR
+
+    assert os.environ["NANIO_DATA_DIR"] == str(DEFAULT_DATA_DIR.resolve())
+
+
+def test_cmd_serve_options_file_data_dir_used(tmp_path, clean_env):
+    """data_dir from options file flows into Settings + env."""
+    target_data = tmp_path / "data-from-options"
+    options_file = tmp_path / "options.toml"
+    options_file.write_text(
+        f'[server]\ndata_dir = "{target_data}"\n[[users]]\naccess_key = "ak"\nsecret_key = "sk"\n'
+    )
+    args = _serve_args(options=options_file)
+    with patch("uvicorn.run"):
+        _cmd_serve(args)
+    assert os.environ["NANIO_DATA_DIR"] == str(target_data.resolve())
 
 
 # ----------------------------------------------------------------------

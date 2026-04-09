@@ -54,7 +54,7 @@ def test_nanio_serve_help_lists_all_flags() -> None:
         "--port",
         "--workers",
         "--region",
-        "--credentials-file",
+        "--options",
         "--log-level",
         "--no-access-log",
     ):

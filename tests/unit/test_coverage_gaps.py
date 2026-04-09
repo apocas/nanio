@@ -95,17 +95,17 @@ def test_build_app_factory_mode_reads_settings_from_env(tmp_path):
         assert app.state.settings.region == "eu-west-1"
 
 
-def test_build_app_factory_mode_loads_credentials_file(tmp_path):
-    """If NANIO_CREDENTIALS_FILE is set, the factory uses the TOML resolver."""
+def test_build_app_factory_mode_loads_options_file(tmp_path):
+    """If NANIO_OPTIONS_FILE is set, the factory uses the TOML resolver."""
     from nanio.app import _settings_from_env
 
-    cred_file = tmp_path / "creds.toml"
-    cred_file.write_text('[[users]]\naccess_key = "alice"\nsecret_key = "wonderland"\n')
+    options_file = tmp_path / "options.toml"
+    options_file.write_text('[[users]]\naccess_key = "alice"\nsecret_key = "wonderland"\n')
     data_dir = tmp_path / "data"
     data_dir.mkdir()
     env = {
         "NANIO_DATA_DIR": str(data_dir),
-        "NANIO_CREDENTIALS_FILE": str(cred_file),
+        "NANIO_OPTIONS_FILE": str(options_file),
     }
     with patch.dict(os.environ, env, clear=True):
         settings = _settings_from_env()

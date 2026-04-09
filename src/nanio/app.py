@@ -32,8 +32,10 @@ _log = logging.getLogger("nanio.app")
 def _settings_from_env() -> Settings:
     data_dir = Path(os.environ.get("NANIO_DATA_DIR") or DEFAULT_DATA_DIR).resolve()
     region = os.environ.get("NANIO_REGION", "us-east-1")
-    cred_file = os.environ.get("NANIO_CREDENTIALS_FILE")
-    credentials = TomlFileCredentialResolver(cred_file) if cred_file else EnvCredentialResolver()
+    options_file = os.environ.get("NANIO_OPTIONS_FILE")
+    credentials = (
+        TomlFileCredentialResolver(options_file) if options_file else EnvCredentialResolver()
+    )
     return Settings(data_dir=data_dir, region=region, credentials=credentials)
 
 

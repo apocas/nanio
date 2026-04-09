@@ -97,23 +97,28 @@ Both options put a `nanio` binary on your `$PATH`.
 
 ## Configuration
 
-`nanio serve` is the only subcommand.
+`nanio` ships with two subcommands: `serve` (run the server) and
+`install` (install a systemd unit + generate an options file).
 
 ```
 nanio serve [OPTIONS]
 
 Options:
+  --options PATH             TOML options file with [server] settings and
+                             [[users]] credentials   [env: NANIO_OPTIONS_FILE]
   --data-dir PATH            Root directory for buckets   [env: NANIO_DATA_DIR]   default: ./nanio-data
   --host TEXT                Bind host                    [env: NANIO_HOST]       default: 0.0.0.0
   --port INTEGER             Bind port                    [env: NANIO_PORT]       default: 9000
   --workers INTEGER          uvicorn workers              [env: NANIO_WORKERS]    default: 1
   --region TEXT              S3 region to report          [env: NANIO_REGION]     default: us-east-1
-  --credentials-file PATH    TOML multi-user file         [env: NANIO_CREDENTIALS_FILE]
   --log-level [debug|info|warning|error]                  default: info
   --no-access-log            Disable per-request logs
   --version
   --help
 ```
+
+Configuration sources are merged with this precedence:
+**CLI flag > NANIO_\* env var > options file > built-in default**.
 
 ### Single-user (env vars)
 
@@ -123,10 +128,18 @@ export NANIO_SECRET_KEY=minioadmin
 nanio serve --data-dir ./data
 ```
 
-### Multi-user (TOML file)
+### Multi-user (options file)
+
+The unified options file holds both server tunables and credentials:
 
 ```toml
-# nanio-credentials.toml
+# nanio-options.toml
+[server]
+data_dir = "/var/lib/nanio"
+host     = "0.0.0.0"
+port     = 9000
+region   = "us-east-1"
+
 [[users]]
 access_key = "alice"
 secret_key = "alice-very-long-secret"
@@ -137,11 +150,43 @@ secret_key = "bob-very-long-secret"
 ```
 
 ```bash
-nanio serve --data-dir ./data --credentials-file nanio-credentials.toml
+nanio serve --options nanio-options.toml
 ```
 
-If neither env vars nor a credentials file are configured, nanio refuses
+CLI flags work alongside the file — `nanio serve --options
+options.toml --port 8080` overrides the port from the file, for example.
+
+If neither env vars nor an options file are configured, nanio refuses
 to start. There is no anonymous mode.
+
+### Install as a systemd service
+
+The easy path on a Linux box is `nanio install`, which generates a
+random `(access_key, secret_key)` pair, writes them into a complete
+options file at `/etc/nanio/options.toml`, and installs a hardened
+systemd unit at `/etc/systemd/system/nanio.service`. Run as root:
+
+```bash
+sudo nanio install
+```
+
+It prints the generated credentials once — make a note of them — and
+the next steps:
+
+```
+sudo useradd --system --no-create-home --shell /usr/sbin/nologin nanio
+sudo chown -R nanio:nanio /var/lib/nanio
+sudo systemctl daemon-reload
+sudo systemctl enable --now nanio
+```
+
+After that, edit `/etc/nanio/options.toml` whenever you want to rotate
+keys, add users, or change `data_dir`/`host`/`port`/`region`, then
+`sudo systemctl restart nanio`.
+
+`nanio install` accepts `--prefix`, `--data-dir`, `--bin`, `--user`,
+`--host`, `--port`, and `--force` if you need to customize the unit or
+dry-run into a scratch directory.
 
 ## Scaling out
 
