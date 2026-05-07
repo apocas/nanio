@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import argparse
+import errno
 import logging
 import os
 import sys
@@ -320,15 +321,28 @@ def _cmd_serve(args: argparse.Namespace) -> int:
     except Exception:
         log.exception("failed to scan for abandoned multipart uploads (non-fatal)")
 
-    uvicorn.run(
-        "nanio.app:build_app",
-        factory=True,
-        host=settings.host,
-        port=settings.port,
-        workers=settings.workers,
-        access_log=settings.access_log,
-        log_level=settings.log_level,
-    )
+    try:
+        uvicorn.run(
+            "nanio.app:build_app",
+            factory=True,
+            host=settings.host,
+            port=settings.port,
+            workers=settings.workers,
+            access_log=settings.access_log,
+            log_level=settings.log_level,
+        )
+    except OSError as exc:
+        if exc.errno == errno.EROFS:
+            log.error(
+                "data directory '%s' is on a read-only filesystem. "
+                "If running under systemd with ProtectSystem=strict, "
+                "ensure ReadWritePaths in the service unit matches "
+                "data_dir in options.toml, then run: "
+                "systemctl daemon-reload && systemctl restart nanio",
+                data_dir,
+            )
+            return 1
+        raise
     return 0
 
 

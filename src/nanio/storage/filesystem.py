@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import contextlib
+import errno
 import logging
 import os
 import shutil
@@ -68,9 +69,21 @@ class FilesystemStorage:
     def __init__(self, data_dir: Path, *, chunk_size: int = 1024 * 1024) -> None:
         self._data_dir = data_dir.resolve()
         self._chunk_size = chunk_size
-        self._data_dir.mkdir(parents=True, exist_ok=True)
-        # Reserve the multipart root upfront so it always exists.
-        multipart_root(self._data_dir).mkdir(parents=True, exist_ok=True)
+        try:
+            self._data_dir.mkdir(parents=True, exist_ok=True)
+            # Reserve the multipart root upfront so it always exists.
+            multipart_root(self._data_dir).mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            if exc.errno == errno.EROFS:
+                raise OSError(
+                    exc.errno,
+                    f"data directory '{self._data_dir}' is on a read-only "
+                    "filesystem. If running under systemd with "
+                    "ProtectSystem=strict, ensure ReadWritePaths in the "
+                    "service unit matches data_dir in options.toml, then "
+                    "run: systemctl daemon-reload && systemctl restart nanio",
+                ) from exc
+            raise
 
     @property
     def data_dir(self) -> Path:

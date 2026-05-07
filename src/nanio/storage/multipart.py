@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import errno
 import json
 import logging
 import os
@@ -94,7 +95,19 @@ class MultipartManager:
     def __init__(self, data_dir: Path, *, chunk_size: int = 1024 * 1024) -> None:
         self._data_dir = data_dir
         self._chunk_size = chunk_size
-        multipart_root(data_dir).mkdir(parents=True, exist_ok=True)
+        try:
+            multipart_root(data_dir).mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            if exc.errno == errno.EROFS:
+                raise OSError(
+                    exc.errno,
+                    f"data directory '{data_dir}' is on a read-only "
+                    "filesystem. If running under systemd with "
+                    "ProtectSystem=strict, ensure ReadWritePaths in the "
+                    "service unit matches data_dir in options.toml, then "
+                    "run: systemctl daemon-reload && systemctl restart nanio",
+                ) from exc
+            raise
 
     # ------------------------------------------------------------------
     # Create / abort

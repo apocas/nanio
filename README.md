@@ -178,8 +178,16 @@ This will:
 
 The generated credentials are printed once — make a note of them.
 After that, edit `/etc/nanio/options.toml` whenever you want to rotate
-keys, add users, or change `data_dir`/`host`/`port`/`region`, then
+keys, add users, or change `host`/`port`/`region`, then
 `sudo systemctl restart nanio`.
+
+> **If you change `data_dir`**, you must also update `ReadWritePaths=` in
+> `/etc/systemd/system/nanio.service` to the new path, then run:
+> ```bash
+> sudo systemctl daemon-reload && sudo systemctl restart nanio
+> ```
+> Without this, systemd's `ProtectSystem=strict` sandbox makes the new
+> path read-only and nanio will fail to start.
 
 Each post-install step is best-effort: on systems without `systemd` or
 `useradd` (containers, CI), the files are still written and the
