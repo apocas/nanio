@@ -168,27 +168,49 @@ WantedBy=multi-user.target
 """
 
 
-def detect_bin_path() -> tuple[Path, bool]:
-    """Best-guess the path to the `nanio` console-script entry point.
+def _is_home_path(path: Path) -> bool:
+    """Return True if *path* resides under a user home directory.
 
-    Returns `(path, was_guessed)`. `was_guessed=True` means we couldn't
-    find a real binary on disk and fell back to a hardcoded default
-    that the operator must hand-edit before starting the service.
+    Binaries under ``/root/`` or ``/home/<user>/`` (e.g. installed with
+    ``pipx install nanio`` as root) cannot be reached by the systemd
+    service: the unit runs as an unprivileged user *and* has
+    ``ProtectHome=true``, so the kernel denies the ``execve`` call before
+    the process even starts.
+    """
+    parts = path.parts  # e.g. ('/', 'root', '.local', 'bin', 'nanio')
+    if len(parts) >= 2 and parts[1] == "root":
+        return True
+    if len(parts) >= 3 and parts[1] == "home":
+        return True
+    return False
+
+
+def detect_bin_path() -> tuple[Path, bool]:
+    """Best-guess the path to the ``nanio`` console-script entry point.
+
+    Returns ``(path, was_guessed)``.  ``was_guessed=True`` means either we
+    couldn't find a real binary on disk, **or** the binary was found inside
+    a user home directory (e.g. ``/root/.local/`` after ``pipx install
+    nanio`` as root).  Home-directory paths are flagged because the
+    generated systemd unit runs with ``ProtectHome=true`` and as an
+    unprivileged user — both of which prevent the service from reaching
+    ``/root/`` or ``/home/<user>/``.
 
     Resolution order:
-    1. `sys.argv[0]` if it exists, is absolute, and points at a real
+    1. ``sys.argv[0]`` if it exists, is absolute, and points at a real
        file (the normal case — pipx/uv-tool/system-pip all set this).
-    2. `shutil.which("nanio")` if `nanio` is on $PATH.
-    3. `/usr/local/bin/nanio` (placeholder).
+    2. ``shutil.which("nanio")`` if ``nanio`` is on ``$PATH``.
+    3. ``/usr/local/bin/nanio`` (placeholder).
     """
     argv0 = sys.argv[0] if sys.argv else ""
     if argv0:
         candidate = Path(argv0).resolve()
         if candidate.is_file() and candidate.name == "nanio":
-            return candidate, False
+            return candidate, _is_home_path(candidate)
     found = shutil.which("nanio")
     if found:
-        return Path(found).resolve(), False
+        p = Path(found).resolve()
+        return p, _is_home_path(p)
     return Path("/usr/local/bin/nanio"), True
 
 

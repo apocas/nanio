@@ -375,11 +375,31 @@ def _print_install_summary(result: _install.InstallResult) -> None:
     print(f"  {result.data_dir}/                (data directory)")
     if result.bin_was_guessed:
         print()
-        print(
-            f"WARNING: could not detect the nanio binary path; the unit's\n"
-            f"ExecStart points at {result.bin_path}. Edit the unit file or\n"
-            "re-run `nanio install --bin <path> --force` before starting the service."
-        )
+        bin_str = str(result.bin_path)
+        if bin_str.startswith(("/root/", "/home/")):
+            print(
+                f"WARNING: the detected binary ({result.bin_path}) is inside a\n"
+                "home directory. The systemd unit runs with ProtectHome=true and\n"
+                "as an unprivileged user, so it cannot reach that path and the\n"
+                "service will fail to start.\n"
+                "\n"
+                "Install nanio system-wide, then re-run this command:\n"
+                "\n"
+                "  # pipx (>= 1.7):\n"
+                "  pipx install --global nanio\n"
+                "\n"
+                "  # or pip directly to /usr/local:\n"
+                "  pip install --break-system-packages nanio\n"
+                "\n"
+                "Alternatively, pass the correct path explicitly:\n"
+                "  nanio install --bin /usr/local/bin/nanio --force"
+            )
+        else:
+            print(
+                f"WARNING: could not detect the nanio binary path; the unit's\n"
+                f"ExecStart points at {result.bin_path}. Edit the unit file or\n"
+                "re-run `nanio install --bin <path> --force` before starting the service."
+            )
     if result.ran_steps:
         print()
         print("Post-install steps completed:")

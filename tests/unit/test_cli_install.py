@@ -12,6 +12,7 @@ import pytest
 from nanio.auth.credentials import TomlFileCredentialResolver
 from nanio.cli import build_parser, main
 from nanio.install import (
+    _is_home_path,
     detect_bin_path,
     generate_credentials,
     install,
@@ -153,6 +154,60 @@ def test_detect_bin_path_argv0_not_named_nanio(tmp_path, monkeypatch):
     monkeypatch.setattr("shutil.which", lambda name: None)
     _, guessed = detect_bin_path()
     assert guessed is True
+
+
+# ----------------------------------------------------------------------
+# _is_home_path
+# ----------------------------------------------------------------------
+
+
+def test_is_home_path_detects_root_local():
+    assert _is_home_path(Path("/root/.local/bin/nanio")) is True
+    assert _is_home_path(Path("/root/.local/share/pipx/venvs/nanio/bin/nanio")) is True
+
+
+def test_is_home_path_detects_user_home():
+    assert _is_home_path(Path("/home/alice/.local/bin/nanio")) is True
+    assert _is_home_path(Path("/home/bob/.local/share/pipx/venvs/nanio/bin/nanio")) is True
+
+
+def test_is_home_path_allows_system_paths():
+    assert _is_home_path(Path("/usr/local/bin/nanio")) is False
+    assert _is_home_path(Path("/usr/bin/nanio")) is False
+    assert _is_home_path(Path("/opt/nanio/bin/nanio")) is False
+
+
+def test_is_home_path_short_path_is_false():
+    assert _is_home_path(Path("/nanio")) is False
+
+
+def test_detect_bin_path_home_argv0_is_guessed(tmp_path, monkeypatch):
+    """Binary found via argv[0] but in a home dir → guessed=True."""
+    import nanio.install as install_mod
+
+    fake_bin = tmp_path / "nanio"
+    fake_bin.write_text("#!/bin/sh\n")
+    fake_bin.chmod(0o755)
+    monkeypatch.setattr("sys.argv", [str(fake_bin)])
+    monkeypatch.setattr(install_mod, "_is_home_path", lambda p: True)
+    path, guessed = detect_bin_path()
+    assert guessed is True
+    assert path == fake_bin.resolve()
+
+
+def test_detect_bin_path_home_which_is_guessed(tmp_path, monkeypatch):
+    """Binary found via shutil.which but in a home dir → guessed=True."""
+    import nanio.install as install_mod
+
+    monkeypatch.setattr("sys.argv", [""])
+    fake_bin = tmp_path / "nanio"
+    fake_bin.write_text("#!/bin/sh\n")
+    fake_bin.chmod(0o755)
+    monkeypatch.setattr("shutil.which", lambda name: str(fake_bin) if name == "nanio" else None)
+    monkeypatch.setattr(install_mod, "_is_home_path", lambda p: True)
+    path, guessed = detect_bin_path()
+    assert guessed is True
+    assert path == fake_bin.resolve()
 
 
 # ----------------------------------------------------------------------
@@ -395,6 +450,23 @@ def test_cli_install_warns_when_bin_path_was_guessed(tmp_path, capsys, monkeypat
     out = capsys.readouterr().out
     assert "WARNING" in out
     assert "/usr/local/bin/nanio" in out
+
+
+def test_cli_install_warns_about_home_path(tmp_path, capsys, monkeypatch):
+    """Install warns specifically when the detected binary is in a home dir."""
+    import nanio.install as install_mod
+
+    fake_bin = tmp_path / "nanio"
+    fake_bin.write_text("#!/bin/sh\n")
+    fake_bin.chmod(0o755)
+    monkeypatch.setattr("sys.argv", [str(fake_bin)])
+    monkeypatch.setattr(install_mod, "_is_home_path", lambda p: True)
+    rc = main(["install", "--prefix", str(tmp_path / "install")])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "WARNING" in out
+    assert "ProtectHome" in out
+    assert "pipx install --global nanio" in out
 
 
 def test_cli_install_prints_ran_steps(tmp_path, capsys):
