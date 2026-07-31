@@ -81,7 +81,7 @@ def parse_xml_safely(body: bytes) -> ET.Element:
     if not body:
         raise MalformedXML("request body is empty")
     try:
-        return DefusedET.fromstring(body, forbid_dtd=True)  # type: ignore[no-any-return]
+        return DefusedET.fromstring(body, forbid_dtd=True)
     except ET.ParseError as exc:
         raise MalformedXML(f"request body is not valid XML: {exc}") from exc
     except _DEFUSED_REJECTIONS as exc:

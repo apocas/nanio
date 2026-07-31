@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from typing import NamedTuple
 from urllib.parse import quote, unquote
@@ -255,7 +256,7 @@ def verify_header_auth(
     path: str,
     query: str,
     headers: dict[str, str],
-    secret_lookup,
+    secret_lookup: Callable[[str], str | None],
     now: datetime | None = None,
     skew: int = DEFAULT_SKEW_SECONDS,
 ) -> VerifiedRequest:
@@ -330,7 +331,7 @@ def verify_presigned_url(
     path: str,
     query: str,
     headers: dict[str, str],
-    secret_lookup,
+    secret_lookup: Callable[[str], str | None],
     now: datetime | None = None,
 ) -> VerifiedRequest:
     """Verify a presigned URL request (signature carried in the query string)."""

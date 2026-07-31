@@ -167,6 +167,7 @@ def _cmd_serve(args: argparse.Namespace) -> int:
     import uvicorn
 
     from nanio.auth.credentials import (
+        CredentialResolver,
         EnvCredentialResolver,
         TomlFileCredentialResolver,
     )
@@ -188,6 +189,7 @@ def _cmd_serve(args: argparse.Namespace) -> int:
 
     # Credentials: prefer the options file (its [[users]] table), fall
     # back to env vars.
+    credentials: CredentialResolver
     if options_path is not None:
         try:
             credentials = TomlFileCredentialResolver(options_path)

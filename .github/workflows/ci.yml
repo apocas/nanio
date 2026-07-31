@@ -38,8 +38,11 @@ jobs:
       - name: Format check (ruff)
         run: uv run ruff format --check src tests
 
-      - name: Run tests
-        run: uv run pytest
+      - name: Type check (mypy)
+        run: uv run mypy src/nanio
+
+      - name: Run tests (100% coverage enforced)
+        run: uv run pytest --cov=nanio --cov-fail-under=100
 
   # The slow streaming memory test is gated behind `-m slow` and not run
   # in the matrix above to keep CI fast. We run it once per push on the

@@ -1,7 +1,7 @@
 # CLAUDE.md — instructions for future Claude sessions in this repo
 
-This file is the operating manual for any Claude Code session that lands
-in `/home/pedrodias/nanio`. Read it before making changes.
+This file is the operating manual for any Claude Code session in this
+repo. Read it before making changes.
 
 ## What is nanio
 
@@ -16,11 +16,14 @@ or web console features. They're explicitly out of scope.
 ## Repo map
 
 ```
+Dockerfile            # multi-stage uv build → ghcr.io/apocas/nanio (see Distribution)
 src/nanio/
 ├── cli.py            # argparse → Settings → uvicorn.run
+├── __main__.py       # python -m nanio
 ├── app.py            # build_app(settings) factory
 ├── app_state.py      # request.app.state accessors
 ├── config.py         # Settings dataclass
+├── options.py        # TOML options-file loader for `serve --options`
 ├── logging.py        # setup_logging
 ├── errors.py         # S3Error hierarchy + .to_xml()
 ├── xml.py            # pure XML response builders
@@ -39,6 +42,7 @@ src/nanio/
 │   └── multipart.py      # MultipartManager — stateless, FS-backed upload state
 └── handlers/
     ├── routes.py         # Starlette route table
+    ├── _body.py          # bounded request-body reader + safe XML parse (golden rule 10)
     ├── service.py        # GET / → ListBuckets
     ├── bucket.py         # bucket CRUD + ListObjectsV2 + DeleteObjects batch + GetBucketLocation
     ├── object.py         # PUT/GET/HEAD/DELETE/CopyObject + Range
@@ -132,8 +136,11 @@ tests/
 # Default suite (unit + integration, ~440 tests, runs in <15 s)
 uv run pytest
 
-# With coverage (the project enforces 100%)
+# With coverage (the project enforces 100%; CI runs this form)
 uv run pytest --cov=nanio --cov-fail-under=100
+
+# Type check (CI enforces this too)
+uv run mypy src/nanio
 
 # Lint + format check
 uv run ruff check src tests

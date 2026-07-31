@@ -16,6 +16,7 @@ from __future__ import annotations
 import contextlib
 import io
 import os
+import sys
 import time
 
 import pytest
@@ -76,6 +77,10 @@ class _GenStream(io.RawIOBase):
 
 
 @pytest.mark.slow
+@pytest.mark.skipif(
+    sys.platform != "linux",
+    reason="server RSS is read from /proc/<pid>/status — Linux only",
+)
 def test_streaming_upload_and_download_bounded_memory(boto3_client, live_server):
     """Upload + download `SIZE_MB` MB and assert server RSS stays bounded."""
     bucket = "nanio-streaming-test"

@@ -11,12 +11,13 @@ import json
 import os
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 from nanio.storage.backend import ObjectInfo
 from nanio.storage.paths import atomic_write
 
 
-def _to_dict(info: ObjectInfo) -> dict:
+def _to_dict(info: ObjectInfo) -> dict[str, Any]:
     return {
         "etag": info.etag,
         "size": info.size,
@@ -30,7 +31,7 @@ def _to_dict(info: ObjectInfo) -> dict:
     }
 
 
-def _from_dict(key: str, d: dict) -> ObjectInfo:
+def _from_dict(key: str, d: dict[str, Any]) -> ObjectInfo:
     return ObjectInfo(
         key=key,
         size=int(d["size"]),

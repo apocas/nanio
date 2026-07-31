@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import errno
 import json
 import logging
 import os
@@ -30,6 +31,7 @@ from collections.abc import AsyncIterator, Iterable, Iterator, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 from nanio.errors import (
     InvalidPart,
@@ -375,18 +377,7 @@ class MultipartManager:
                 for _, path, _, size in on_disk_parts:
                     in_fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
                     with os.fdopen(in_fd, "rb", closefd=True) as in_f:
-                        in_fd = in_f.fileno()
-                        remaining = size
-                        offset = 0
-                        while remaining > 0:
-                            sent = os.sendfile(out_fd, in_fd, offset, remaining)
-                            if sent == 0:  # pragma: no cover
-                                # sendfile returns 0 only on a short
-                                # source — happens if a part file was
-                                # truncated under us. Bail defensively.
-                                break
-                            offset += sent
-                            remaining -= sent
+                        _copy_part(out_fd, in_f.fileno(), size, self._chunk_size)
                 out_f.flush()
                 os.fsync(out_fd)
 
@@ -424,11 +415,52 @@ class MultipartManager:
 
 
 # ----------------------------------------------------------------------
+# Part concatenation
+# ----------------------------------------------------------------------
+
+# sendfile errnos that mean "file-to-file copy unsupported here": macOS
+# only does file-to-socket (ENOTSOCK), older Linux kernels report EINVAL,
+# and exotic platforms may lack the syscall entirely (ENOSYS).
+_SENDFILE_UNSUPPORTED_ERRNOS = frozenset({errno.ENOTSOCK, errno.EINVAL, errno.ENOSYS})
+
+
+def _copy_part(out_fd: int, in_fd: int, size: int, chunk_size: int) -> None:
+    """Copy `size` bytes from `in_fd` to `out_fd` — sendfile, with a pread fallback."""
+    remaining = size
+    offset = 0
+    use_sendfile = True
+    while remaining > 0:
+        if use_sendfile:
+            try:
+                sent = os.sendfile(out_fd, in_fd, offset, remaining)
+            except OSError as exc:
+                if exc.errno not in _SENDFILE_UNSUPPORTED_ERRNOS:
+                    raise
+                use_sendfile = False
+                continue
+            if sent == 0:  # pragma: no cover
+                # sendfile returns 0 only on a short source — happens if
+                # a part file was truncated under us. Bail defensively.
+                break
+            offset += sent
+            remaining -= sent
+        else:
+            data = os.pread(in_fd, min(chunk_size, remaining), offset)
+            if not data:  # pragma: no cover
+                # Short source — same defensive bail as the sendfile
+                # branch above.
+                break
+            written = os.write(out_fd, data)
+            offset += written
+            remaining -= written
+
+
+# ----------------------------------------------------------------------
 # Init dict (de)serialization
 # ----------------------------------------------------------------------
 
 
-def _init_to_dict(init: MultipartInit) -> dict:
+def _init_to_dict(init: MultipartInit) -> dict[str, Any]:
     return {
         "bucket": init.bucket,
         "key": init.key,
@@ -441,7 +473,7 @@ def _init_to_dict(init: MultipartInit) -> dict:
     }
 
 
-def _dict_to_init(d: dict) -> MultipartInit:
+def _dict_to_init(d: dict[str, Any]) -> MultipartInit:
     return MultipartInit(
         bucket=d["bucket"],
         key=d["key"],

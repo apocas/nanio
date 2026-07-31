@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+import errno
 import hashlib
 import json
 import os
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
+from unittest.mock import patch
 
 import pytest
 
@@ -24,7 +26,7 @@ from nanio.storage.multipart import (
     _init_to_dict,
     new_upload_id,
 )
-from nanio.storage.paths import multipart_dir, multipart_init_path
+from nanio.storage.paths import multipart_dir, multipart_init_path, object_path
 
 
 @pytest.fixture
@@ -125,6 +127,34 @@ def test_complete_round_trip(manager, storage, tmp_path):
     # The object is now visible via the storage layer.
     head = storage.head_object("widgets", "big.bin")
     assert head.size == 11
+
+
+def test_complete_falls_back_when_sendfile_unsupported(manager, storage, tmp_path):
+    """On macOS sendfile is file→socket only — complete() falls back to pread."""
+    upload_id = manager.create(MultipartInit(bucket="widgets", key="big.bin"))
+    p1 = asyncio.run(manager.upload_part(upload_id, 1, _stream(b"hello ")))
+    p2 = asyncio.run(manager.upload_part(upload_id, 2, _stream(b"world")))
+    boom = OSError(errno.ENOTSOCK, "Socket operation on non-socket")
+    with patch("os.sendfile", side_effect=boom):
+        info = manager.complete(upload_id, [(1, p1.etag), (2, p2.etag)])
+    assert info.size == 11
+    assert object_path(tmp_path, "widgets", "big.bin").read_bytes() == b"hello world"
+
+
+def test_complete_sendfile_fast_path(manager, storage, tmp_path):
+    """Cover the sendfile fast path deterministically on every platform."""
+    upload_id = manager.create(MultipartInit(bucket="widgets", key="big.bin"))
+    p1 = asyncio.run(manager.upload_part(upload_id, 1, _stream(b"hello ")))
+    p2 = asyncio.run(manager.upload_part(upload_id, 2, _stream(b"world")))
+
+    def fake_sendfile(out_fd: int, in_fd: int, offset: int, count: int) -> int:
+        data = os.pread(in_fd, count, offset)
+        return os.write(out_fd, data)
+
+    with patch("os.sendfile", side_effect=fake_sendfile):
+        info = manager.complete(upload_id, [(1, p1.etag), (2, p2.etag)])
+    assert info.size == 11
+    assert object_path(tmp_path, "widgets", "big.bin").read_bytes() == b"hello world"
 
 
 def test_complete_with_missing_part(manager):
