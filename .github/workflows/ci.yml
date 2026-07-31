@@ -63,3 +63,43 @@ jobs:
         env:
           NANIO_STREAMING_TEST_MB: "256"
         run: uv run pytest -m slow -s
+
+  # Build the Docker image (amd64 only, no push) so a broken Dockerfile is
+  # caught on PRs instead of at release time. The --version assertion guards
+  # the importlib.metadata contract: the image must install nanio as a real
+  # wheel, or the CLI reports 0.0.0+local.
+  docker-smoke:
+    name: docker build smoke test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          load: true
+          tags: nanio:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Image reports a real version (not 0.0.0+local)
+        run: |
+          docker run --rm nanio:ci --version
+          docker run --rm nanio:ci --version | grep -Ev '0\.0\.0\+local'
+
+      - name: Server starts and answers HTTP
+        run: |
+          docker run -d --name nanio -p 9000:9000 \
+            -e NANIO_ACCESS_KEY=ci -e NANIO_SECRET_KEY=ci nanio:ci
+          for i in $(seq 1 20); do
+            curl -s -o /dev/null http://127.0.0.1:9000/ && break
+            sleep 0.5
+          done
+          # Unauthenticated request → S3 error XML = server is up and serving.
+          curl -s http://127.0.0.1:9000/ | grep -q '<Error>'
+          docker rm -f nanio

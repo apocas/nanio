@@ -5,15 +5,9 @@ from __future__ import annotations
 import pytest
 
 from nanio.options import (
-    DEFAULT_OPTIONS_PATH,
     SERVER_KEYS,
     load_server_options,
 )
-
-
-def test_default_options_path_constant():
-    assert DEFAULT_OPTIONS_PATH.name == "options.toml"
-    assert DEFAULT_OPTIONS_PATH.parent.name == "nanio"
 
 
 def test_load_full_server_section(tmp_path):

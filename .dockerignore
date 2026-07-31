@@ -1,0 +1,13 @@
+# Allowlist: the image build needs exactly these inputs. README.md and
+# LICENSE are required because pyproject.toml declares them as `readme`
+# and `license-files` — the wheel build fails without them.
+*
+!pyproject.toml
+!uv.lock
+!README.md
+!LICENSE
+!src
+
+# ...but never bytecode caches from inside src/.
+**/__pycache__
+**/*.py[cod]

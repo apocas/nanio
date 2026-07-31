@@ -1,7 +1,6 @@
 """Command-line entry point for nanio.
 
-- `nanio serve`   — runs the HTTP server (delegates to uvicorn).
-- `nanio install` — generates an options file and writes a systemd unit.
+- `nanio serve` — runs the HTTP server (delegates to uvicorn).
 """
 
 from __future__ import annotations
@@ -14,7 +13,6 @@ from pathlib import Path
 from typing import Any
 
 from nanio import __version__
-from nanio import install as _install
 from nanio import options as _options
 
 log = logging.getLogger("nanio.cli")
@@ -106,58 +104,6 @@ def build_parser() -> argparse.ArgumentParser:
     )
     serve.set_defaults(func=_cmd_serve)
 
-    install_p = subparsers.add_parser(
-        "install",
-        help="Install a systemd unit + generate an options file.",
-        description=(
-            "Generate a fresh access/secret key pair, write them into an "
-            f"options file at {_install.DEFAULT_OPTIONS_PATH}, and install a "
-            "hardened systemd unit at /etc/systemd/system/nanio.service. "
-            "Run as root."
-        ),
-    )
-    install_p.add_argument(
-        "--prefix",
-        type=Path,
-        default=Path("/"),
-        help="Root prefix for all installed paths (default: /). Useful for testing.",
-    )
-    install_p.add_argument(
-        "--data-dir",
-        type=Path,
-        default=_install.DEFAULT_DATA_DIR,
-        help=f"Data directory written into the options file (default: {_install.DEFAULT_DATA_DIR}).",
-    )
-    install_p.add_argument(
-        "--bin",
-        type=Path,
-        default=None,
-        help="Path to the nanio binary baked into ExecStart (default: auto-detect).",
-    )
-    install_p.add_argument(
-        "--user",
-        default=_install.DEFAULT_USER,
-        help=f"User/Group in the systemd unit (default: {_install.DEFAULT_USER}).",
-    )
-    install_p.add_argument(
-        "--host",
-        default=_install.DEFAULT_HOST,
-        help=f"Bind host written into the options file (default: {_install.DEFAULT_HOST}).",
-    )
-    install_p.add_argument(
-        "--port",
-        type=int,
-        default=_install.DEFAULT_PORT,
-        help=f"Bind port written into the options file (default: {_install.DEFAULT_PORT}).",
-    )
-    install_p.add_argument(
-        "--force",
-        action="store_true",
-        default=False,
-        help="Overwrite existing files instead of refusing.",
-    )
-    install_p.set_defaults(func=_cmd_install)
-
     return parser
 
 
@@ -240,8 +186,8 @@ def _cmd_serve(args: argparse.Namespace) -> int:
     log_level = _resolve_str(args.log_level, "NANIO_LOG_LEVEL", options, "log_level", "info")
     setup_logging(log_level)
 
-    # Credentials: prefer the options file (it always carries [[users]]
-    # in the install-generated layout), fall back to env vars.
+    # Credentials: prefer the options file (its [[users]] table), fall
+    # back to env vars.
     if options_path is not None:
         try:
             credentials = TomlFileCredentialResolver(options_path)
@@ -334,59 +280,6 @@ def _cmd_serve(args: argparse.Namespace) -> int:
 
 def _path_or_none(value: str | None) -> Path | None:
     return Path(value) if value else None
-
-
-def _cmd_install(args: argparse.Namespace) -> int:
-    try:
-        result = _install.install(
-            prefix=args.prefix,
-            data_dir=args.data_dir,
-            bin_path=args.bin,
-            user=args.user,
-            host=args.host,
-            port=args.port,
-            force=args.force,
-        )
-    except FileExistsError as exc:
-        print(f"nanio: {exc}", file=sys.stderr)
-        print("nanio: re-run with --force to overwrite.", file=sys.stderr)
-        return 2
-    _print_install_summary(result)
-    return 0
-
-
-def _print_install_summary(result: _install.InstallResult) -> None:
-    """Render the post-install report to stdout."""
-    print("nanio installed.")
-    print()
-    print(f"Generated credentials (saved to {result.options_path}):")
-    print()
-    print(f"  access_key = {result.access_key}")
-    print(f"  secret_key = {result.secret_key}")
-    print()
-    print(
-        f"These are the only copies. Edit {result.options_path} to change\n"
-        "them, add more users, or tweak the [server] settings."
-    )
-    print()
-    print("Files written:")
-    print(f"  {result.options_path}       (mode 0600)")
-    print(f"  {result.systemd_unit_path}      (mode 0644)")
-    print(f"  {result.data_dir}/                (data directory)")
-    if result.bin_was_guessed:
-        print()
-        print(
-            f"WARNING: could not detect the nanio binary path; the unit's\n"
-            f"ExecStart points at {result.bin_path}. Edit the unit file or\n"
-            "re-run `nanio install --bin <path> --force` before starting the service."
-        )
-    if result.ran_steps:
-        print()
-        print("Post-install steps completed:")
-        for step in result.ran_steps:
-            print(f"  {step}")
-    print()
-    print(f"nanio will listen on http://{result.host}:{result.port}")
 
 
 def main(argv: list[str] | None = None) -> int:

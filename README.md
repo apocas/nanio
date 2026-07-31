@@ -95,10 +95,63 @@ uv tool install nanio
 
 Both options put a `nanio` binary on your `$PATH`.
 
+### Docker
+
+```bash
+docker run -d --name nanio \
+  -p 9000:9000 \
+  -e NANIO_ACCESS_KEY=minioadmin \
+  -e NANIO_SECRET_KEY=minioadmin \
+  -v nanio-data:/data \
+  ghcr.io/apocas/nanio:latest
+```
+
+The image stores data in `/data` (a named volume above) and runs as a
+non-root user (uid 1000). Anything after the image name is passed to
+the `nanio` CLI: `docker run --rm ghcr.io/apocas/nanio --version`, or
+`... ghcr.io/apocas/nanio:latest serve --workers 4`.
+
+Or with compose:
+
+```yaml
+services:
+  nanio:
+    image: ghcr.io/apocas/nanio:latest
+    ports:
+      - "9000:9000"
+    environment:
+      NANIO_ACCESS_KEY: minioadmin
+      NANIO_SECRET_KEY: minioadmin
+    volumes:
+      - nanio-data:/data
+
+volumes:
+  nanio-data:
+```
+
+For multi-user credentials, mount an options file and point
+`NANIO_OPTIONS_FILE` at it:
+
+```bash
+docker run -d --name nanio \
+  -p 9000:9000 \
+  -v ./nanio-options.toml:/etc/nanio/options.toml:ro \
+  -e NANIO_OPTIONS_FILE=/etc/nanio/options.toml \
+  -v nanio-data:/data \
+  ghcr.io/apocas/nanio:latest
+```
+
+Leave `data_dir` out of the file's `[server]` section — inside the
+container the data directory is always `/data` (the image sets
+`NANIO_DATA_DIR`, which takes precedence over the options file).
+
+To bind-mount a host directory instead of a named volume, make it
+writable by uid 1000 (`chown 1000 ./data`) or run the container as
+yourself: `--user "$(id -u):$(id -g)"`.
+
 ## Configuration
 
-`nanio` ships with two subcommands: `serve` (run the server) and
-`install` (install a systemd unit + generate an options file).
+`nanio` ships with a single subcommand: `serve`.
 
 ```
 nanio serve [OPTIONS]
@@ -158,36 +211,6 @@ options.toml --port 8080` overrides the port from the file, for example.
 
 If neither env vars nor an options file are configured, nanio refuses
 to start. There is no anonymous mode.
-
-### Install as a systemd service
-
-One command does everything:
-
-```bash
-sudo nanio install
-```
-
-This will:
-
-1. Generate a random access key + secret key
-2. Write `/etc/nanio/options.toml` with the keys and default `[server]` settings
-3. Install a hardened systemd unit at `/etc/systemd/system/nanio.service`
-4. Create a `nanio` system user (if it doesn't already exist)
-5. `chown` the data dir and config to the `nanio` user
-6. Run `systemctl daemon-reload` and `systemctl enable --now nanio`
-
-The generated credentials are printed once — make a note of them.
-After that, edit `/etc/nanio/options.toml` whenever you want to rotate
-keys, add users, or change `data_dir`/`host`/`port`/`region`, then
-`sudo systemctl restart nanio`.
-
-Each post-install step is best-effort: on systems without `systemd` or
-`useradd` (containers, CI), the files are still written and the
-missing steps are silently skipped.
-
-`nanio install` accepts `--prefix`, `--data-dir`, `--bin`, `--user`,
-`--host`, `--port`, and `--force` if you need to customize the output
-or dry-run into a scratch directory.
 
 ## Scaling out
 

@@ -227,6 +227,33 @@ uv run ruff check --fix src tests
 uv run ruff format src tests
 ```
 
+## Distribution
+
+nanio ships exactly two ways:
+
+- **PyPI** — `pipx install nanio` / `uv tool install nanio`. Published
+  by `.github/workflows/publish.yml` (trusted publishing) on `v*` tags.
+- **Docker** — `ghcr.io/apocas/nanio`, built by the `publish-image` job
+  in the same workflow on `v*` tags (multi-arch amd64+arm64 via QEMU,
+  tagged `X.Y.Z`, `X.Y`, `latest`). `ci.yml` has a `docker-smoke` job
+  that builds the image on every push/PR.
+
+There is no systemd installer — `nanio install` was removed on
+2026-07-31 in favor of the above. Don't reintroduce it.
+
+The image contract (treat it as API):
+
+- Data dir is `/data` via a baked `NANIO_DATA_DIR` env (deliberately
+  overrides any `data_dir` in a mounted options file).
+- Runs as non-root `nanio`, uid/gid 1000. Port 9000.
+- `ENTRYPOINT ["nanio"]` + `CMD ["serve"]` — trailing `docker run` args
+  go straight to the CLI.
+- Built with `uv sync --frozen --no-dev --no-editable` in a multi-stage
+  build so `importlib.metadata` sees the real version (the smoke test
+  asserts it isn't `0.0.0+local`).
+- No HEALTHCHECK (no unauthenticated endpoint exists), no tini, no
+  `VOLUME`, no shell entrypoint — don't add them.
+
 ## Things NOT to break
 
 - The `Storage` protocol shape — handlers depend on it.
@@ -235,6 +262,9 @@ uv run ruff format src tests
 - Wire format compatibility for any operation listed in the README's
   feature matrix. The boto3 wire-test suite is the gate.
 - The streaming memory ceiling. The slow test enforces it.
+- The Docker image contract: `/data` as the data path, uid 1000, port
+  9000, `ENTRYPOINT ["nanio"]`. Users' volumes and compose files
+  depend on these.
 
 ## Recent context
 

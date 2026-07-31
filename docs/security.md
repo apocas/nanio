@@ -182,8 +182,8 @@ filesystem quotas, LVM, or per-volume limits to bound this.
 The default credential resolver reads `NANIO_ACCESS_KEY` and
 `NANIO_SECRET_KEY` from the process environment. These show up in
 `/proc/<pid>/environ`, in the output of `ps eww`, and in any crash
-dump. Prefer the `--credentials-file` mode (TOML) for production, with
-the file owned by the nanio user and mode `0600`.
+dump. Prefer the `--options` mode (TOML) for production, with the
+file owned by the nanio user and mode `0600`.
 
 ### Running the multipart GC on a live server
 
