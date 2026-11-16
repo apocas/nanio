@@ -10,7 +10,7 @@
 | `HeadBucket` | ✅ | |
 | `GetBucketLocation` | ✅ | Returns the configured `--region`. |
 | `PutObject` | ✅ | Streams to disk. Honors `Content-Type`, `Content-MD5`, `x-amz-meta-*`, `Content-Encoding`, `Content-Disposition`, `Cache-Control`. |
-| `GetObject` | ✅ | Streams from disk. Supports `Range:` (`206 Partial Content`). |
+| `GetObject` | ✅ | Streams from disk. Supports `Range:` (`206 Partial Content`). A range that ends past the object is served up to its last byte (RFC 9110 §14.1.2, as AWS S3 does); one that starts at or past the end is `416 InvalidRange`. |
 | `HeadObject` | ✅ | |
 | `DeleteObject` | ✅ | Idempotent (deleting a missing key returns 204). |
 | `DeleteObjects` (batch) | ✅ | XML body, per-key result reporting. |
@@ -99,6 +99,7 @@ nanio returns standard S3 error XML with these codes:
 - `InvalidBucketName` (400)
 - `InvalidObjectName` (400)
 - `InvalidArgument` (400)
+- `InvalidRange` (416)
 - `InvalidRequest` (400)
 - `InvalidPart` (400)
 - `InvalidPartOrder` (400)

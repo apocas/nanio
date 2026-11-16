@@ -14,6 +14,7 @@ from nanio.errors import (
     BucketAlreadyOwnedByYou,
     BucketNotEmpty,
     InvalidArgument,
+    InvalidRange,
     NoSuchBucket,
     NoSuchKey,
 )
@@ -171,11 +172,43 @@ def test_get_object_range(storage):
     assert body == b"uvwxyz"
 
 
-def test_get_invalid_range(storage):
+async def _read_range(storage, start, end):
+    result = await storage.get_object("widgets", "k", range_start=start, range_end=end)
+    out = b""
+    async for chunk in result.body:
+        out += chunk
+    return out, result
+
+
+def test_get_range_ending_past_the_end_is_served_to_the_last_byte(storage):
+    """RFC 9110 §14.1.2, as AWS S3 does: s3transfer asks for bytes=0-8388607 first."""
+    storage.create_bucket("widgets")
+    asyncio.run(storage.put_object("widgets", "k", _stream(b"hello")))
+    body, result = asyncio.run(_read_range(storage, 1, 8388607))
+    assert body == b"ello"
+    assert (result.range_start, result.range_end) == (1, 4)
+
+
+def test_get_range_starting_past_the_end_is_invalid_range(storage):
+    storage.create_bucket("widgets")
+    asyncio.run(storage.put_object("widgets", "k", _stream(b"hello")))
+    for start, end in ((5, None), (10, 20)):
+        with pytest.raises(InvalidRange):
+            asyncio.run(storage.get_object("widgets", "k", range_start=start, range_end=end))
+
+
+def test_get_any_range_of_an_empty_object_is_invalid_range(storage):
+    storage.create_bucket("widgets")
+    asyncio.run(storage.put_object("widgets", "k", _stream(b"")))
+    with pytest.raises(InvalidRange):
+        asyncio.run(storage.get_object("widgets", "k", range_start=0, range_end=8388607))
+
+
+def test_get_backwards_range_is_invalid_argument(storage):
     storage.create_bucket("widgets")
     asyncio.run(storage.put_object("widgets", "k", _stream(b"hello")))
     with pytest.raises(InvalidArgument):
-        asyncio.run(storage.get_object("widgets", "k", range_start=10, range_end=20))
+        asyncio.run(storage.get_object("widgets", "k", range_start=3, range_end=1))
 
 
 def test_get_missing_key(storage):

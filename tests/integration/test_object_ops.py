@@ -144,6 +144,16 @@ async def test_get_range_open_ended(asgi_client):
 
 
 @pytest.mark.asyncio
+async def test_get_range_ending_past_the_end(asgi_client):
+    await asgi_client.put("/widgets/k", content=b"abcdefghij")
+    r = await asgi_client.get("/widgets/k", headers={"range": "bytes=0-8388607"})
+    assert r.status_code == 206
+    assert r.content == b"abcdefghij"
+    assert r.headers["content-range"] == "bytes 0-9/10"
+    assert r.headers["content-length"] == "10"
+
+
+@pytest.mark.asyncio
 async def test_put_object_with_subkey(asgi_client):
     await asgi_client.put("/widgets/path/to/deep/file.txt", content=b"deep")
     r = await asgi_client.get("/widgets/path/to/deep/file.txt")

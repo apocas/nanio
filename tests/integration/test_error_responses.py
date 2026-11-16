@@ -75,10 +75,19 @@ async def test_bad_digest(asgi_client):
 
 
 @pytest.mark.asyncio
-async def test_invalid_argument_on_bad_range(asgi_client):
+async def test_invalid_range_when_the_range_starts_past_the_end(asgi_client):
     await asgi_client.put("/widgets")
     await asgi_client.put("/widgets/k", content=b"abc")
     r = await asgi_client.get("/widgets/k", headers={"range": "bytes=10-20"})
+    assert r.status_code == 416
+    assert _parse_error(r.content)["Code"] == "InvalidRange"
+
+
+@pytest.mark.asyncio
+async def test_invalid_argument_on_a_backwards_range(asgi_client):
+    await asgi_client.put("/widgets")
+    await asgi_client.put("/widgets/k", content=b"abc")
+    r = await asgi_client.get("/widgets/k", headers={"range": "bytes=2-1"})
     assert r.status_code == 400
     assert _parse_error(r.content)["Code"] == "InvalidArgument"
 
