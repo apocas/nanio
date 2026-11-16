@@ -140,6 +140,14 @@ class InvalidArgument(S3Error):
     http_status = 400
 
 
+class InvalidRange(S3Error):
+    """A byte range that starts at or past the end of the object (RFC 9110 §15.5.17)."""
+
+    code = "InvalidRange"
+    message = "The requested range is not satisfiable"
+    http_status = 416
+
+
 class InvalidRequest(S3Error):
     code = "InvalidRequest"
     message = "Invalid Request"

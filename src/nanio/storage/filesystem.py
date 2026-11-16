@@ -29,6 +29,7 @@ from nanio.errors import (
     BucketAlreadyOwnedByYou,
     BucketNotEmpty,
     InvalidArgument,
+    InvalidRange,
     NoSuchBucket,
     NoSuchKey,
 )
@@ -244,9 +245,22 @@ class FilesystemStorage:
             length = size
         else:
             start = range_start if range_start is not None else 0
-            end = range_end if range_end is not None else size - 1
-            if start < 0 or end >= size or start > end:
-                raise InvalidArgument(f"invalid byte range {start}-{end} for size {size}")
+            if start < 0 or (range_end is not None and range_end < start):
+                raise InvalidArgument(
+                    f"invalid byte range {start}-{'' if range_end is None else range_end}"
+                    f" for size {size}"
+                )
+            if start >= size:
+                # Nothing of the object lies in the range: 416, as AWS S3
+                # answers (any range on an empty object included). s3transfer
+                # reads an InvalidRange on its first chunk as an empty object.
+                raise InvalidRange(
+                    f"byte range starts at {start}, past the end of the object ({size} bytes)"
+                )
+            # A last byte at or past the end means "up to the end" (RFC 9110
+            # §14.1.2), and AWS S3 and MinIO serve it that way: s3transfer opens
+            # a download with bytes=0-8388607 whatever the object's size.
+            end = size - 1 if range_end is None else min(range_end, size - 1)
             length = end - start + 1
 
         body = _stream_pread(opath, start, length, self._chunk_size)

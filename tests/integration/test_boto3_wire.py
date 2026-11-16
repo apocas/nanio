@@ -112,6 +112,23 @@ def test_get_with_range(boto3_client, bucket):
     assert resp["ContentRange"] == "bytes 2-5/10"
 
 
+def test_get_with_a_range_ending_past_the_end(boto3_client, bucket):
+    """s3transfer >= 0.19 opens a download with bytes=0-8388607 when it skips the HEAD
+    (response_checksum_validation="when_required"), whatever the object's size."""
+    boto3_client.put_object(Bucket=bucket, Key="k", Body=b"abcdefghij")
+    resp = boto3_client.get_object(Bucket=bucket, Key="k", Range="bytes=0-8388607")
+    assert resp["Body"].read() == b"abcdefghij"
+    assert resp["ContentRange"] == "bytes 0-9/10"
+
+
+def test_get_with_a_range_starting_past_the_end(boto3_client, bucket):
+    boto3_client.put_object(Bucket=bucket, Key="k", Body=b"abc")
+    with pytest.raises(ClientError) as exc:
+        boto3_client.get_object(Bucket=bucket, Key="k", Range="bytes=3-")
+    assert exc.value.response["Error"]["Code"] == "InvalidRange"
+    assert exc.value.response["ResponseMetadata"]["HTTPStatusCode"] == 416
+
+
 def test_put_object_with_subkey(boto3_client, bucket):
     boto3_client.put_object(Bucket=bucket, Key="path/to/deep/file.txt", Body=b"deep")
     resp = boto3_client.get_object(Bucket=bucket, Key="path/to/deep/file.txt")
